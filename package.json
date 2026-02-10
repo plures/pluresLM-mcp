@@ -1,0 +1,36 @@
+{
+  "name": "@plures/superlocalmemory-mcp",
+  "version": "0.1.0",
+  "description": "MCP server for superlocalmemory — persistent vector memory for AI coding assistants",
+  "type": "module",
+  "license": "AGPL-3.0",
+  "author": "Plures <hello@plures.dev>",
+  "repository": { "type": "git", "url": "https://github.com/plures/superlocalmemory-mcp.git" },
+  "keywords": ["mcp", "memory", "vector-search", "copilot", "ai", "local-first"],
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "superlocalmemory-mcp": "./dist/index.js"
+  },
+  "files": ["dist", "README.md", "LICENSE"],
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsx src/index.ts",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.26.0",
+    "zod": "^3.25.76",
+    "@plures/superlocalmemory": "file:../../../plugins/superlocalmemory",
+    "better-sqlite3": "^11.0.0",
+    "openai": "^6.18.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.0",
+    "tsx": "^4.0.0",
+    "@types/node": "^22.0.0",
+    "@types/better-sqlite3": "^7.0.0"
+  },
+  "engines": { "node": ">=18" }
+}
