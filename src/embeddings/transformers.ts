@@ -2,8 +2,10 @@ import { pipeline, env } from "@huggingface/transformers";
 import os from "node:os";
 import path from "node:path";
 
-// Configure cache directory
-const cacheDir = path.join(os.homedir(), ".cache", "superlocalmemory", "transformers");
+// Configure cache directory (customizable via environment variable)
+const cacheDir = 
+  process.env.SUPERLOCALMEMORY_CACHE_DIR ||
+  path.join(os.homedir(), ".cache", "superlocalmemory", "transformers");
 env.cacheDir = cacheDir;
 env.allowLocalModels = true;
 env.allowRemoteModels = true;
@@ -13,12 +15,11 @@ export interface EmbeddingProvider {
   dimension: number;
 }
 
-// Narrow type for the feature-extraction pipeline used in this class.
-// This reflects only the contract we rely on (call signature and `data` shape).
-type EmbeddingPipeline = (
-  text: string,
-  options: { pooling: "mean" | "max"; normalize: boolean }
-) => Promise<{ data: ArrayLike<number> }>;
+// Type for the feature-extraction pipeline used in this class.
+// Using a simpler interface to avoid overly complex union types.
+interface EmbeddingPipeline {
+  (text: string, options: { pooling: string; normalize: boolean }): Promise<{ data: ArrayLike<number> }>;
+}
 
 /**
  * Transformers.js embedding provider using bge-small-en-v1.5 (384 dimensions).
@@ -43,7 +44,7 @@ export class TransformersEmbeddings implements EmbeddingProvider {
       }
       
       try {
-        this.pipeline = await pipeline("feature-extraction", this.model);
+        this.pipeline = (await pipeline("feature-extraction", this.model)) as any as EmbeddingPipeline;
         if (this.debug) {
           console.error(`[TransformersEmbeddings] Model loaded successfully`);
         }

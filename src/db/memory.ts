@@ -42,6 +42,7 @@ export class MemoryDB {
     this.db = new Database(dbPath);
     this.db.pragma("journal_mode = WAL");
     this.initTables();
+    this.validateDimension();
   }
 
   private initTables() {
@@ -74,6 +75,36 @@ export class MemoryDB {
         "capture_count",
         "0"
       );
+    }
+  }
+
+  /**
+   * Validate that existing embeddings in the database match the configured dimension.
+   * This prevents dimension mismatches when switching between embedding providers.
+   */
+  private validateDimension() {
+    const stmt = this.db.prepare("SELECT embedding FROM memories LIMIT 1");
+    const row = stmt.get() as { embedding: string } | undefined;
+
+    if (row) {
+      try {
+        const existingEmbedding = JSON.parse(row.embedding) as number[];
+        if (existingEmbedding.length !== this.dimension) {
+          throw new Error(
+            `Database dimension mismatch: Database contains ${existingEmbedding.length}-dim embeddings, ` +
+            `but configured provider uses ${this.dimension}-dim embeddings. ` +
+            `To fix this, either:\n` +
+            `  1. Set OPENAI_API_KEY to use OpenAI (1536-dim) if database was created with OpenAI\n` +
+            `  2. Use a new database path with SUPERLOCALMEMORY_DB_PATH\n` +
+            `  3. Delete the existing database to start fresh with ${this.dimension}-dim embeddings`
+          );
+        }
+      } catch (err) {
+        if (err instanceof Error && err.message.includes("Database dimension mismatch")) {
+          throw err;
+        }
+        // Ignore JSON parse errors for corrupted data - will be handled during search
+      }
     }
   }
 
@@ -190,7 +221,14 @@ export class MemoryDB {
   }
 
   /**
-   * Vector search using cosine similarity
+   * Vector search using cosine similarity.
+   * 
+   * Performance note: This implementation loads all embeddings into memory and performs
+   * brute-force cosine similarity computation. For large databases (>10,000 memories),
+   * this may have performance implications. Future optimizations could include:
+   * - Approximate nearest neighbor search (ANN)
+   * - Vector indexing (e.g., HNSW, IVF)
+   * - Limiting search scope with filters
    */
   async vectorSearch(
     queryEmbedding: number[],

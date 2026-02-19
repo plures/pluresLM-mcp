@@ -38,6 +38,7 @@ All configuration is **optional**:
 
 - `SUPERLOCALMEMORY_DB_PATH` (optional) — SQLite DB path (default: `~/.superlocalmemory/mcp.db`)
 - `SUPERLOCALMEMORY_DEBUG` (optional) — set to `true` for debug logs to stderr
+- `SUPERLOCALMEMORY_CACHE_DIR` (optional) — Transformers.js model cache directory (default: `~/.cache/superlocalmemory/transformers`)
 - `OPENAI_API_KEY` (optional) — use OpenAI embeddings instead of local Transformers.js
 - `OPENAI_EMBEDDING_MODEL` (optional) — OpenAI model to use (default: `text-embedding-3-small`)
 
@@ -46,8 +47,7 @@ All configuration is **optional**:
 If you prefer OpenAI embeddings over local Transformers.js:
 
 1. Set `OPENAI_API_KEY` in your environment
-2. The server will automatically use OpenAI with 1536-dim embeddings
-3. Falls back to Transformers.js if OpenAI fails
+2. The server will use OpenAI with 1536-dim embeddings
 
 ## Migration / Breaking Changes
 
@@ -57,11 +57,11 @@ If you already have an existing database:
 
 - **Databases created with OpenAI embeddings must continue using `OPENAI_API_KEY`.**
   - Do **not** switch that database to Transformers.js; the stored vectors will be incompatible.
+  - The server will detect dimension mismatches and provide a clear error message.
 - There is **no automatic migration** between 384‑dim and 1536‑dim embeddings.
 - To change providers (OpenAI ⇄ Transformers.js), you must either:
   - Point `SUPERLOCALMEMORY_DB_PATH` to a **new database**, or
   - Delete/recreate the existing DB and **re-index all memories**.
-- Automatic fallback from OpenAI → Transformers.js is safe for **newly created** databases, but may produce poor or invalid retrieval results if used on a database originally indexed with OpenAI embeddings.
 ## Editor setup
 
 ### Zero-Config Examples

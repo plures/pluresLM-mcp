@@ -20,21 +20,15 @@ export async function createEmbeddings(
 ): Promise<EmbeddingProvider> {
   const { openaiApiKey, openaiModel, debug = false } = config;
 
-  // If OpenAI key is provided, use OpenAI
+  // If OpenAI key is provided, use OpenAI (fail fast on error)
   if (openaiApiKey) {
-    try {
-      if (debug) {
-        console.error("[Embeddings] Using OpenAI provider");
-      }
-      return new OpenAIEmbeddings(openaiApiKey, openaiModel, debug);
-    } catch (err) {
-      if (debug) {
-        console.error(
-          `[Embeddings] OpenAI initialization failed: ${(err as Error).message}. Falling back to Transformers.js`
-        );
-      }
-      // Fall through to Transformers.js
+    if (debug) {
+      console.error("[Embeddings] Using OpenAI provider");
     }
+    // When an explicit OpenAI API key is provided, fail fast instead of silently
+    // falling back to a different provider with incompatible dimensions.
+    // This prevents dimension mismatch errors with existing databases.
+    return new OpenAIEmbeddings(openaiApiKey, openaiModel, debug);
   }
 
   // Default: Transformers.js (zero-config)

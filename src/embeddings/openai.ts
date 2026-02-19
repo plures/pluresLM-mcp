@@ -39,6 +39,13 @@ export class OpenAIEmbeddings implements EmbeddingProvider {
 
       const embedding = response.data[0].embedding;
 
+      // Validate dimension
+      if (embedding.length !== this.dimension) {
+        throw new Error(
+          `Expected ${this.dimension}-dim embedding but got ${embedding.length}-dim from OpenAI`
+        );
+      }
+
       if (this.debug) {
         console.error(
           `[OpenAIEmbeddings] Generated embedding of dimension ${embedding.length} for text of length ${text.length}`
