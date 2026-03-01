@@ -1,3 +1,7 @@
+## [0.2.1] — 2026-03-01
+
+- fix(ci): add id-token permission to release workflow (#4) (37641a9)
+
 ## [0.2.0] — 2026-02-20
 
 - feat: replace OpenAI/Ollama with Transformers.js for zero-config operation (#2) (d1240f1)

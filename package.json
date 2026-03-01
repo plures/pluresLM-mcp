@@ -1,6 +1,6 @@
 {
   "name": "@plures/superlocalmemory-mcp",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "MCP server for superlocalmemory — persistent vector memory for AI coding assistants",
   "type": "module",
   "license": "AGPL-3.0",
