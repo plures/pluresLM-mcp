@@ -1,6 +1,6 @@
-# @plures/superlocalmemory-mcp
+# @plures/pluresLM-mcp
 
-MCP (Model Context Protocol) server for **superlocalmemory** — a **local-first, persistent vector memory** for AI coding assistants.
+MCP (Model Context Protocol) server for **pluresLM** — a **local-first, persistent vector memory** for AI coding assistants.
 
 It exposes a small set of MCP **tools** and **resources** so editors like VS Code (Copilot MCP), Cursor, Continue, and Claude Desktop can store and recall long-term memory during coding sessions.
 
@@ -13,21 +13,21 @@ It exposes a small set of MCP **tools** and **resources** so editors like VS Cod
 **No API keys required!** Just run:
 
 ```bash
-npx @plures/superlocalmemory-mcp
+npx @plures/pluresLM-mcp
 ```
 
 The server uses **Transformers.js** to run embeddings locally in-process with the `bge-small-en-v1.5` model (384 dimensions).
 
-> **Note:** First run will download the model (~100MB) to `~/.cache/superlocalmemory/transformers`. Subsequent runs are instant and fully offline.
+> **Note:** First run will download the model (~100MB) to `~/.cache/pluresLM/transformers`. Subsequent runs are instant and fully offline.
 
 ## Install
 
 ```bash
 # Run directly (recommended):
-npx @plures/superlocalmemory-mcp
+npx @plures/pluresLM-mcp
 
 # Or install globally:
-npm install -g @plures/superlocalmemory-mcp
+npm install -g @plures/pluresLM-mcp
 ```
 
 ## Configuration
@@ -36,9 +36,9 @@ All configuration is **optional**:
 
 ### Environment Variables
 
-- `SUPERLOCALMEMORY_DB_PATH` (optional) — SQLite DB path (default: `~/.superlocalmemory/mcp.db`)
-- `SUPERLOCALMEMORY_DEBUG` (optional) — set to `true` for debug logs to stderr
-- `SUPERLOCALMEMORY_CACHE_DIR` (optional) — Transformers.js model cache directory (default: `~/.cache/superlocalmemory/transformers`)
+- `pluresLM_DB_PATH` (optional) — SQLite DB path (default: `~/.pluresLM/mcp.db`)
+- `pluresLM_DEBUG` (optional) — set to `true` for debug logs to stderr
+- `pluresLM_CACHE_DIR` (optional) — Transformers.js model cache directory (default: `~/.cache/pluresLM/transformers`)
 - `OPENAI_API_KEY` (optional) — use OpenAI embeddings instead of local Transformers.js
 - `OPENAI_EMBEDDING_MODEL` (optional) — OpenAI model to use (default: `text-embedding-3-small`)
 
@@ -60,7 +60,7 @@ If you already have an existing database:
   - The server will detect dimension mismatches and provide a clear error message.
 - There is **no automatic migration** between 384‑dim and 1536‑dim embeddings.
 - To change providers (OpenAI ⇄ Transformers.js), you must either:
-  - Point `SUPERLOCALMEMORY_DB_PATH` to a **new database**, or
+  - Point `pluresLM_DB_PATH` to a **new database**, or
   - Delete/recreate the existing DB and **re-index all memories**.
 ## Editor setup
 
@@ -73,9 +73,9 @@ These examples require **no environment variables** and work out of the box:
 ```json
 {
   "mcpServers": {
-    "superlocalmemory": {
+    "pluresLM": {
       "command": "npx",
-      "args": ["@plures/superlocalmemory-mcp"]
+      "args": ["@plures/pluresLM-mcp"]
     }
   }
 }
@@ -86,9 +86,9 @@ These examples require **no environment variables** and work out of the box:
 ```json
 {
   "mcpServers": {
-    "superlocalmemory": {
+    "pluresLM": {
       "command": "npx",
-      "args": ["@plures/superlocalmemory-mcp"]
+      "args": ["@plures/pluresLM-mcp"]
     }
   }
 }
@@ -100,9 +100,9 @@ These examples require **no environment variables** and work out of the box:
 {
   "mcpServers": [
     {
-      "name": "superlocalmemory",
+      "name": "pluresLM",
       "command": "npx",
-      "args": ["@plures/superlocalmemory-mcp"]
+      "args": ["@plures/pluresLM-mcp"]
     }
   ]
 }
@@ -113,9 +113,9 @@ These examples require **no environment variables** and work out of the box:
 ```json
 {
   "mcpServers": {
-    "superlocalmemory": {
+    "pluresLM": {
       "command": "npx",
-      "args": ["@plures/superlocalmemory-mcp"]
+      "args": ["@plures/pluresLM-mcp"]
     }
   }
 }
@@ -128,9 +128,9 @@ If you prefer OpenAI embeddings:
 ```json
 {
   "mcpServers": {
-    "superlocalmemory": {
+    "pluresLM": {
       "command": "npx",
-      "args": ["@plures/superlocalmemory-mcp"],
+      "args": ["@plures/pluresLM-mcp"],
       "env": {
         "OPENAI_API_KEY": "your-key"
       }
@@ -201,7 +201,7 @@ This server provides local-first persistent memory with:
 
 ## Privacy
 
-All memory data is stored **locally** on your machine at `SUPERLOCALMEMORY_DB_PATH` (default: `~/.superlocalmemory/mcp.db`).
+All memory data is stored **locally** on your machine at `pluresLM_DB_PATH` (default: `~/.pluresLM/mcp.db`).
 
 ### Network Usage
 
