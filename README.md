@@ -1,6 +1,6 @@
-# @plures/superlocalmemory-mcp
+# @plures/plureslm-mcp
 
-MCP (Model Context Protocol) server for **superlocalmemory** — a **local-first, persistent vector memory** for AI coding assistants.
+MCP (Model Context Protocol) server for **PluresLM** — a **local-first, persistent vector memory** for AI coding assistants.
 
 It exposes a small set of MCP **tools** and **resources** so editors like VS Code (Copilot MCP), Cursor, Continue, and Claude Desktop can store and recall long-term memory during coding sessions.
 
@@ -13,7 +13,7 @@ It exposes a small set of MCP **tools** and **resources** so editors like VS Cod
 **No API keys required!** Just run:
 
 ```bash
-npx @plures/superlocalmemory-mcp
+npx @plures/plureslm-mcp
 ```
 
 The server uses **Transformers.js** to run embeddings locally in-process with the `bge-small-en-v1.5` model (384 dimensions).
@@ -24,10 +24,10 @@ The server uses **Transformers.js** to run embeddings locally in-process with th
 
 ```bash
 # Run directly (recommended):
-npx @plures/superlocalmemory-mcp
+npx @plures/plureslm-mcp
 
 # Or install globally:
-npm install -g @plures/superlocalmemory-mcp
+npm install -g @plures/plureslm-mcp
 ```
 
 ## Configuration
@@ -73,9 +73,9 @@ These examples require **no environment variables** and work out of the box:
 ```json
 {
   "mcpServers": {
-    "superlocalmemory": {
+    "plureslm": {
       "command": "npx",
-      "args": ["@plures/superlocalmemory-mcp"]
+      "args": ["@plures/plureslm-mcp"]
     }
   }
 }
@@ -86,9 +86,9 @@ These examples require **no environment variables** and work out of the box:
 ```json
 {
   "mcpServers": {
-    "superlocalmemory": {
+    "plureslm": {
       "command": "npx",
-      "args": ["@plures/superlocalmemory-mcp"]
+      "args": ["@plures/plureslm-mcp"]
     }
   }
 }
@@ -100,9 +100,9 @@ These examples require **no environment variables** and work out of the box:
 {
   "mcpServers": [
     {
-      "name": "superlocalmemory",
+      "name": "plureslm",
       "command": "npx",
-      "args": ["@plures/superlocalmemory-mcp"]
+      "args": ["@plures/plureslm-mcp"]
     }
   ]
 }
@@ -113,9 +113,9 @@ These examples require **no environment variables** and work out of the box:
 ```json
 {
   "mcpServers": {
-    "superlocalmemory": {
+    "plureslm": {
       "command": "npx",
-      "args": ["@plures/superlocalmemory-mcp"]
+      "args": ["@plures/plureslm-mcp"]
     }
   }
 }
@@ -128,9 +128,9 @@ If you prefer OpenAI embeddings:
 ```json
 {
   "mcpServers": {
-    "superlocalmemory": {
+    "plureslm": {
       "command": "npx",
-      "args": ["@plures/superlocalmemory-mcp"],
+      "args": ["@plures/plureslm-mcp"],
       "env": {
         "OPENAI_API_KEY": "your-key"
       }

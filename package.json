@@ -1,13 +1,13 @@
 {
-  "name": "@plures/superlocalmemory-mcp",
+  "name": "@plures/plureslm-mcp",
   "version": "0.2.1",
-  "description": "MCP server for superlocalmemory — persistent vector memory for AI coding assistants",
+  "description": "MCP server for PluresLM — persistent vector memory for AI coding assistants",
   "type": "module",
   "license": "AGPL-3.0",
   "author": "Plures <hello@plures.dev>",
   "repository": {
     "type": "git",
-    "url": "https://github.com/plures/superlocalmemory-mcp.git"
+    "url": "https://github.com/plures/pluresLM-mcp.git"
   },
   "keywords": [
     "mcp",
@@ -20,7 +20,7 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "bin": {
-    "superlocalmemory-mcp": "./dist/index.js"
+    "plureslm-mcp": "./dist/index.js"
   },
   "files": [
     "dist",
