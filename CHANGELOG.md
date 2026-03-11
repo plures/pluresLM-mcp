@@ -1,3 +1,7 @@
+## [2.2.0] — 2026-03-11
+
+- feat: use PluresDB native HNSW vector search for scalability (5b1e2d9)
+
 ## [2.1.1] — 2026-03-11
 
 - fix: syntax error in config.ts and correct HTTP transport (be9895c)
