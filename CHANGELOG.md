@@ -1,3 +1,8 @@
+## [2.3.0] — 2026-03-11
+
+- feat: add Sprint Log compatibility - 13 missing tools (667eee9)
+- polish: remove dead SSE import and add proper type safety (6a7dfbd)
+
 ## [2.2.0] — 2026-03-11
 
 - feat: use PluresDB native HNSW vector search for scalability (5b1e2d9)
