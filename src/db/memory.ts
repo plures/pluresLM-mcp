@@ -1,10 +1,10 @@
 import { randomUUID } from "node:crypto";
-import PluresDatabase from "@plures/pluresdb";
+import PluresDatabase, { type VectorSearchItem } from "@plures/pluresdb";
 
 export interface MemoryEntry {
   id: string;
   content: string;
-  embedding: number[]; // Native array, not JSON string
+  embedding: number[];
   tags: string[];
   category?: string;
   source: string;
@@ -29,12 +29,25 @@ export interface SearchResult {
   score: number;
 }
 
+// Type-safe PluresDB interface
+interface NativePluresDatabase {
+  put(id: string, data: unknown): string;
+  putWithEmbedding(id: string, data: unknown, embedding: number[]): string;
+  get(id: string): unknown | null;
+  delete(id: string): void;
+  list(): unknown[];
+  listByType(nodeType: string): unknown[];
+  vectorSearch(embedding: number[], limit?: number, threshold?: number): VectorSearchItem[];
+  getActorId(): string;
+  stats(): unknown;
+}
+
 /**
  * PluresDB-based vector memory database with native HNSW vector search.
  * Supports high-performance vector similarity search and distributed P2P sync.
  */
 export class MemoryDB {
-  private db: any; // Native PluresDB instance
+  private db: NativePluresDatabase;
   private dimension: number;
 
   constructor(topic: string, secret: string | undefined, dimension: number) {
@@ -86,7 +99,7 @@ export class MemoryDB {
     };
 
     // Store with native embedding indexing - this enables HNSW vector search
-    const txnId = this.db.putWithEmbedding(id, entry, embedding);
+    this.db.putWithEmbedding(id, entry, embedding);
 
     return {
       entry,
@@ -105,27 +118,35 @@ export class MemoryDB {
     const results: SearchResult[] = [];
     
     for (const item of nativeResults) {
-      // Convert native result to our SearchResult format
-      const entry = item.data as MemoryEntry;
+      // Type-safe conversion from VectorSearchItem
+      const rawEntry = item.data;
       
-      // Ensure the entry has the expected structure
-      if (entry && typeof entry === 'object' && 'id' in entry && 'content' in entry) {
+      // Ensure the entry has the expected MemoryEntry structure
+      if (this.isValidMemoryEntry(rawEntry)) {
         results.push({
-          entry: {
-            id: entry.id,
-            content: entry.content,
-            embedding: entry.embedding || [],
-            tags: entry.tags || [],
-            category: entry.category,
-            source: entry.source || '',
-            created_at: entry.created_at || 0
-          },
+          entry: rawEntry,
           score: item.score
         });
       }
     }
 
     return results;
+  }
+
+  /**
+   * Type guard for MemoryEntry validation
+   */
+  private isValidMemoryEntry(data: unknown): data is MemoryEntry {
+    return (
+      typeof data === 'object' &&
+      data !== null &&
+      'id' in data &&
+      'content' in data &&
+      'embedding' in data &&
+      'tags' in data &&
+      'source' in data &&
+      'created_at' in data
+    );
   }
 
   /**
@@ -167,11 +188,25 @@ export class MemoryDB {
     
     const profile: Record<string, string> = {};
     for (const item of profileItems) {
-      if (item && typeof item === 'object' && 'key' in item && 'value' in item) {
-        profile[item.key as string] = item.value as string;
+      if (this.isKeyValuePair(item)) {
+        profile[item.key] = item.value;
       }
     }
     return profile;
+  }
+
+  /**
+   * Type guard for key-value pair validation
+   */
+  private isKeyValuePair(data: unknown): data is { key: string; value: string } {
+    return (
+      typeof data === 'object' &&
+      data !== null &&
+      'key' in data &&
+      'value' in data &&
+      typeof (data as any).key === 'string' &&
+      typeof (data as any).value === 'string'
+    );
   }
 
   /**
@@ -182,11 +217,11 @@ export class MemoryDB {
     const allItems = this.db.list() || [];
     
     const memories = allItems
-      .filter((item: any) => item && item.content && typeof item.content === 'string')
-      .sort((a: any, b: any) => (b.created_at || 0) - (a.created_at || 0))
+      .filter((item): item is MemoryEntry => this.isValidMemoryEntry(item))
+      .sort((a, b) => b.created_at - a.created_at)
       .slice(0, limit);
     
-    return memories.map((item: any) => item.content as string);
+    return memories.map(item => item.content);
   }
 
   /**
@@ -196,14 +231,11 @@ export class MemoryDB {
     const nativeStats = this.db.stats() || {};
     const allItems = this.db.list() || [];
     
-    const memoryCount = allItems.filter((item: any) => 
-      item && item.content && typeof item.content === 'string'
-    ).length;
-    
+    const memoryCount = allItems.filter(item => this.isValidMemoryEntry(item)).length;
     const profileCount = this.db.listByType('profile')?.length || 0;
     
     return {
-      version: "2.0.0-pluresdb-native",
+      version: "2.1.0-pluresdb-native",
       backend: "PluresDB-Native-HNSW",
       memoryCount,
       profileCount,
@@ -221,9 +253,8 @@ export class MemoryDB {
   async incrementCaptureCount(): Promise<void> {
     const statsId = "captureCount";
     const existing = this.db.get(statsId);
-    const current = (existing && typeof existing === 'object' && 'count' in existing) 
-      ? (existing.count as number) 
-      : 0;
+    
+    const current = this.isStatsEntry(existing) ? existing.count : 0;
     
     this.db.put(statsId, {
       type: 'stat',
@@ -231,5 +262,17 @@ export class MemoryDB {
       count: current + 1,
       updated_at: Date.now()
     });
+  }
+
+  /**
+   * Type guard for stats entry validation
+   */
+  private isStatsEntry(data: unknown): data is { count: number } {
+    return (
+      typeof data === 'object' &&
+      data !== null &&
+      'count' in data &&
+      typeof (data as any).count === 'number'
+    );
   }
 }
