@@ -94,6 +94,7 @@ export async function startServer(): Promise<void> {
   const db = new MemoryDB({ topic: config.pluresDbTopic, secret: config.pluresDbSecret, dbPath: config.pluresDbPath, dimension: embeddings.dimension });
   await db.connect();
 
+  function createMcpServer() {
   const server = new Server(
     { name: "pluresLM-mcp", version: "2.0.0" },
     {
@@ -801,18 +802,35 @@ export async function startServer(): Promise<void> {
   // Transport + lifecycle
   // ---------------------------------------------------------------------------
 
-  let transport: StdioServerTransport | StreamableHTTPServerTransport;
+  return server;
+  } // end createMcpServer
+
+  const server = createMcpServer();
+  let transport: StdioServerTransport | null;
   
   if (config.transport === 'sse' || config.transport === 'http') {
     const { createServer } = await import('node:http');
     const { randomUUID } = await import('node:crypto');
 
-    // Session-tracked StreamableHTTP transport — each client gets its own session via Mcp-Session-Id header
-    const httpTransport = new StreamableHTTPServerTransport({
-      sessionIdGenerator: () => randomUUID(),
-    });
+    // Multi-client: each session gets its own transport + server instance
+    const sessions = new Map<string, { transport: StreamableHTTPServerTransport; server: Server }>();
 
-    const httpServer = createServer((req, res) => {
+    async function createSession(req: import('node:http').IncomingMessage, res: import('node:http').ServerResponse) {
+      const sessionTransport = new StreamableHTTPServerTransport({
+        sessionIdGenerator: () => randomUUID(),
+      });
+      const sessionServer = createMcpServer();
+      await sessionServer.connect(sessionTransport);
+      // Handle the init request — this sets the session ID
+      await sessionTransport.handleRequest(req, res);
+      const sid = sessionTransport.sessionId;
+      if (sid) {
+        sessions.set(sid, { transport: sessionTransport, server: sessionServer });
+        sessionTransport.onclose = () => sessions.delete(sid);
+      }
+    }
+
+    const httpServer = createServer(async (req, res) => {
       // Health endpoint
       if (req.url === '/health') {
         res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -822,19 +840,31 @@ export async function startServer(): Promise<void> {
           version: '2.4.0',
           dbPath: config.pluresDbPath,
           topic: config.pluresDbTopic,
+          activeSessions: sessions.size,
         }));
         return;
       }
 
-      // MCP endpoint — delegate to StreamableHTTPServerTransport
+      // MCP endpoint
       if (req.url === '/mcp') {
-        httpTransport.handleRequest(req, res).catch((err: unknown) => {
+        try {
+          const sessionId = req.headers['mcp-session-id'] as string | undefined;
+          if (sessionId && sessions.has(sessionId)) {
+            await sessions.get(sessionId)!.transport.handleRequest(req, res);
+          } else if (!sessionId) {
+            // New session — create transport+server pair and handle init
+            await createSession(req, res);
+          } else {
+            res.writeHead(404, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Session not found' }));
+          }
+        } catch (err) {
           console.error('MCP request error:', err);
           if (!res.headersSent) {
             res.writeHead(500, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ error: String(err) }));
           }
-        });
+        }
         return;
       }
 
@@ -848,7 +878,7 @@ export async function startServer(): Promise<void> {
       console.error(`   DB: ${config.pluresDbPath || config.pluresDbTopic}`);
     });
 
-    transport = httpTransport;
+    transport = null; // HTTP mode — sessions manage their own transports
   } else {
     // Default stdio transport
     transport = new StdioServerTransport();
@@ -858,7 +888,7 @@ export async function startServer(): Promise<void> {
 
   const shutdown = async () => {
     try {
-      await transport.close();
+      if (transport) await transport.close();
     } catch (err) {
       console.error("Error closing transport:", err);
     }
@@ -872,5 +902,5 @@ export async function startServer(): Promise<void> {
   process.on("SIGINT", () => void shutdown());
   process.on("SIGTERM", () => void shutdown());
 
-  await server.connect(transport);
+  if (transport) await server.connect(transport);
 }
