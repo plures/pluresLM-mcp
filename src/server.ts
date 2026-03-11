@@ -182,6 +182,104 @@ export async function startServer(): Promise<void> {
           description: "Get P2P sync status (peer count, connectivity).",
           inputSchema: { type: "object", properties: {} },
         },
+        {
+          name: "pluresLM_list",
+          description: "List memories with pagination and filtering.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              limit: { type: "number", description: "Max results (default 10)." },
+              offset: { type: "number", description: "Skip offset (default 0)." },
+              category: { type: "string", description: "Filter by category." },
+              tags: { type: "array", items: { type: "string" }, description: "Filter by tags." },
+              sortBy: { type: "string", enum: ["created_at"], description: "Sort field (default created_at)." },
+              sortOrder: { type: "string", enum: ["asc", "desc"], description: "Sort direction (default desc)." },
+            },
+          },
+        },
+        {
+          name: "pluresLM_get",
+          description: "Get memory by ID.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              id: { type: "string", description: "Memory ID." },
+            },
+            required: ["id"],
+          },
+        },
+        {
+          name: "pluresLM_update",
+          description: "Update memory by ID.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              id: { type: "string", description: "Memory ID." },
+              content: { type: "string", description: "New content." },
+              tags: { type: "array", items: { type: "string" }, description: "New tags." },
+              category: { type: "string", description: "New category." },
+            },
+            required: ["id"],
+          },
+        },
+        {
+          name: "pluresLM_search_text",
+          description: "Text search (non-semantic) across memories.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              query: { type: "string", description: "Text search query." },
+              limit: { type: "number", description: "Max results (default 10)." },
+              caseSensitive: { type: "boolean", description: "Case sensitive search (default false)." },
+              wholeWords: { type: "boolean", description: "Match whole words only (default false)." },
+              category: { type: "string", description: "Filter by category." },
+            },
+            required: ["query"],
+          },
+        },
+        {
+          name: "pluresLM_consolidate",
+          description: "Find and remove duplicate memories.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              similarityThreshold: { type: "number", description: "Similarity threshold (default 0.95)." },
+              dryRun: { type: "boolean", description: "Preview only, don't delete (default true)." },
+            },
+          },
+        },
+        {
+          name: "pluresLM_find_stale",
+          description: "Find memories not accessed recently.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              days: { type: "number", description: "Days threshold (default 30)." },
+              limit: { type: "number", description: "Max results (default 10)." },
+            },
+          },
+        },
+        {
+          name: "pluresLM_world_state",
+          description: "Get memory system summary and world state.",
+          inputSchema: { type: "object", properties: {} },
+        },
+        {
+          name: "pluresLM_daily_summary",
+          description: "Get daily summary for a specific date.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              date: { type: "string", description: "Date in YYYY-MM-DD format." },
+            },
+            required: ["date"],
+          },
+        },
+        {
+          name: "pluresLM_health",
+          description: "MCP service health check.",
+          inputSchema: { type: "object", properties: {} },
+        },
       ],
     };
   });
@@ -319,6 +417,138 @@ export async function startServer(): Promise<void> {
         }
 
         return textResult({ directory: root, indexed, skipped, errors, maxFiles, maxBytesPerFile, category, tags: extraTags });
+      }
+
+      // New Sprint Log compatibility tools
+      if (name === "pluresLM_list") {
+        const limit = args.limit !== undefined ? Number(args.limit) : 10;
+        const offset = args.offset !== undefined ? Number(args.offset) : 0;
+        const category = args.category !== undefined ? String(args.category) : undefined;
+        const tags = asStringArray(args.tags);
+        const sortBy = args.sortBy !== undefined ? String(args.sortBy) as 'created_at' : 'created_at';
+        const sortOrder = args.sortOrder !== undefined ? String(args.sortOrder) as 'asc' | 'desc' : 'desc';
+
+        const memories = await db.list({ limit, offset, category, tags, sortBy, sortOrder });
+        return textResult({
+          memories: memories.map(m => ({
+            id: m.id,
+            content: m.content,
+            tags: m.tags,
+            category: m.category,
+            source: m.source,
+            created_at: m.created_at,
+          })),
+          total: memories.length,
+          limit,
+          offset,
+        });
+      }
+
+      if (name === "pluresLM_get") {
+        const id = String(args.id ?? "");
+        if (!id) throw new McpError(ErrorCode.InvalidParams, "id is required");
+
+        const memory = await db.get(id);
+        if (!memory) {
+          throw new McpError(ErrorCode.InvalidParams, `Memory not found: ${id}`);
+        }
+
+        return textResult({
+          memory: {
+            id: memory.id,
+            content: memory.content,
+            tags: memory.tags,
+            category: memory.category,
+            source: memory.source,
+            created_at: memory.created_at,
+          }
+        });
+      }
+
+      if (name === "pluresLM_update") {
+        const id = String(args.id ?? "");
+        if (!id) throw new McpError(ErrorCode.InvalidParams, "id is required");
+
+        const updates: any = {};
+        if (args.content !== undefined) updates.content = String(args.content);
+        if (args.tags !== undefined) updates.tags = asStringArray(args.tags) ?? [];
+        if (args.category !== undefined) updates.category = String(args.category);
+
+        const success = await db.update(id, updates);
+        if (!success) {
+          throw new McpError(ErrorCode.InvalidParams, `Memory not found: ${id}`);
+        }
+
+        return textResult({ success: true, id, updated: Object.keys(updates) });
+      }
+
+      if (name === "pluresLM_search_text") {
+        const query = String(args.query ?? "").trim();
+        if (!query) throw new McpError(ErrorCode.InvalidParams, "query is required");
+
+        const limit = args.limit !== undefined ? Number(args.limit) : 10;
+        const caseSensitive = args.caseSensitive !== undefined ? Boolean(args.caseSensitive) : false;
+        const wholeWords = args.wholeWords !== undefined ? Boolean(args.wholeWords) : false;
+        const category = args.category !== undefined ? String(args.category) : undefined;
+
+        const results = await db.searchText(query, { limit, caseSensitive, wholeWords, category });
+
+        return textResult({
+          query,
+          results: results.map(m => ({
+            id: m.id,
+            content: m.content,
+            tags: m.tags,
+            category: m.category,
+            source: m.source,
+            created_at: m.created_at,
+          })),
+        });
+      }
+
+      if (name === "pluresLM_consolidate") {
+        const threshold = args.similarityThreshold !== undefined ? Number(args.similarityThreshold) : 0.95;
+        const dryRun = args.dryRun !== undefined ? Boolean(args.dryRun) : true;
+
+        const result = await db.consolidate(threshold, dryRun);
+        return textResult(result);
+      }
+
+      if (name === "pluresLM_find_stale") {
+        const days = args.days !== undefined ? Number(args.days) : 30;
+        const limit = args.limit !== undefined ? Number(args.limit) : 10;
+
+        const staleMemories = await db.findStale(days, limit);
+        return textResult({
+          daysThreshold: days,
+          staleMemories: staleMemories.map(m => ({
+            id: m.id,
+            content: m.content,
+            tags: m.tags,
+            category: m.category,
+            source: m.source,
+            created_at: m.created_at,
+            daysSinceCreated: Math.floor((Date.now() - m.created_at) / (24 * 60 * 60 * 1000)),
+          })),
+        });
+      }
+
+      if (name === "pluresLM_world_state") {
+        const worldState = await db.getWorldState();
+        return textResult(worldState);
+      }
+
+      if (name === "pluresLM_daily_summary") {
+        const date = String(args.date ?? "");
+        if (!date) throw new McpError(ErrorCode.InvalidParams, "date is required");
+
+        const summary = await db.getDailySummary(date);
+        return textResult(summary);
+      }
+
+      if (name === "pluresLM_health") {
+        const health = await db.health();
+        return textResult(health);
       }
 
       throw new McpError(ErrorCode.MethodNotFound, `Unknown tool: ${name}`);

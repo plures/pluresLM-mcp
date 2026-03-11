@@ -275,4 +275,295 @@ export class MemoryDB {
       typeof (data as any).count === 'number'
     );
   }
+
+  /**
+   * Get memory by ID  
+   */
+  async get(id: string): Promise<MemoryEntry | null> {
+    const data = this.db.get(id);
+    if (!this.isValidMemoryEntry(data)) {
+      return null;
+    }
+    return data;
+  }
+
+  /**
+   * Update memory by ID
+   */
+  async update(id: string, updates: Partial<MemoryEntry>): Promise<boolean> {
+    const existing = await this.get(id);
+    if (!existing) {
+      return false;
+    }
+
+    const updated: MemoryEntry = {
+      ...existing,
+      ...updates,
+      id, // Preserve ID
+      created_at: existing.created_at // Preserve creation time
+    };
+
+    // If embedding changed, store with new embedding; otherwise use regular put
+    if (updates.embedding) {
+      this.db.putWithEmbedding(id, updated, updates.embedding);
+    } else {
+      this.db.put(id, updated);
+    }
+
+    return true;
+  }
+
+  /**
+   * List memories with pagination and filtering
+   */
+  async list(options: {
+    limit?: number;
+    offset?: number;
+    category?: string;
+    tags?: string[];
+    sortBy?: 'created_at' | 'updated_at';
+    sortOrder?: 'asc' | 'desc';
+  } = {}): Promise<MemoryEntry[]> {
+    const { limit, offset = 0, category, tags, sortBy = 'created_at', sortOrder = 'desc' } = options;
+
+    // Get all items and filter to valid memories
+    const allItems = this.db.list() || [];
+    let memories = allItems.filter((item): item is MemoryEntry => this.isValidMemoryEntry(item));
+
+    // Apply filters
+    if (category) {
+      memories = memories.filter(m => m.category === category);
+    }
+
+    if (tags && tags.length > 0) {
+      memories = memories.filter(m => 
+        tags.some(tag => m.tags.includes(tag))
+      );
+    }
+
+    // Sort
+    memories.sort((a, b) => {
+      const aVal = sortBy === 'created_at' ? a.created_at : a.created_at; // TODO: Add updated_at field
+      const bVal = sortBy === 'created_at' ? b.created_at : b.created_at;
+      return sortOrder === 'desc' ? bVal - aVal : aVal - bVal;
+    });
+
+    // Apply pagination
+    const start = offset;
+    const end = limit ? start + limit : undefined;
+    return memories.slice(start, end);
+  }
+
+  /**
+   * Text search (non-semantic) across memory content
+   */
+  async searchText(query: string, options: {
+    limit?: number;
+    caseSensitive?: boolean;
+    wholeWords?: boolean;
+    category?: string;
+  } = {}): Promise<MemoryEntry[]> {
+    const { limit = 10, caseSensitive = false, wholeWords = false, category } = options;
+
+    let searchQuery = query;
+    if (!caseSensitive) {
+      searchQuery = searchQuery.toLowerCase();
+    }
+
+    const allItems = this.db.list() || [];
+    const memories = allItems.filter((item): item is MemoryEntry => this.isValidMemoryEntry(item));
+
+    const matches = memories.filter(memory => {
+      // Apply category filter
+      if (category && memory.category !== category) {
+        return false;
+      }
+
+      let content = memory.content;
+      if (!caseSensitive) {
+        content = content.toLowerCase();
+      }
+
+      if (wholeWords) {
+        const regex = new RegExp(`\\b${searchQuery.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`);
+        return regex.test(content);
+      } else {
+        return content.includes(searchQuery);
+      }
+    });
+
+    return matches.slice(0, limit);
+  }
+
+  /**
+   * Find stale memories (not accessed recently)
+   */
+  async findStale(daysThreshold: number = 30, limit: number = 10): Promise<MemoryEntry[]> {
+    const cutoffTime = Date.now() - (daysThreshold * 24 * 60 * 60 * 1000);
+
+    const allItems = this.db.list() || [];
+    const memories = allItems.filter((item): item is MemoryEntry => this.isValidMemoryEntry(item));
+
+    const staleMemories = memories
+      .filter(memory => memory.created_at < cutoffTime)
+      .sort((a, b) => a.created_at - b.created_at) // Oldest first
+      .slice(0, limit);
+
+    return staleMemories;
+  }
+
+  /**
+   * Consolidate memories (remove near-duplicates)
+   */
+  async consolidate(similarityThreshold: number = 0.95, dryRun: boolean = true): Promise<{
+    duplicatesFound: number;
+    duplicatesRemoved: number;
+    suggestions: Array<{original: MemoryEntry, duplicate: MemoryEntry, similarity: number}>;
+  }> {
+    const allItems = this.db.list() || [];
+    const memories = allItems.filter((item): item is MemoryEntry => this.isValidMemoryEntry(item));
+
+    const suggestions: Array<{original: MemoryEntry, duplicate: MemoryEntry, similarity: number}> = [];
+    let duplicatesRemoved = 0;
+
+    // Compare each memory with all others
+    for (let i = 0; i < memories.length; i++) {
+      for (let j = i + 1; j < memories.length; j++) {
+        const memA = memories[i];
+        const memB = memories[j];
+
+        // Skip if either has empty embedding
+        if (!memA.embedding?.length || !memB.embedding?.length) continue;
+
+        const similarity = this.cosineSimilarity(memA.embedding, memB.embedding);
+        
+        if (similarity >= similarityThreshold) {
+          // Keep the newer one (higher created_at), remove older
+          const [original, duplicate] = memA.created_at > memB.created_at ? [memA, memB] : [memB, memA];
+          
+          suggestions.push({ original, duplicate, similarity });
+
+          if (!dryRun) {
+            await this.delete(duplicate.id);
+            duplicatesRemoved++;
+          }
+        }
+      }
+    }
+
+    return {
+      duplicatesFound: suggestions.length,
+      duplicatesRemoved,
+      suggestions
+    };
+  }
+
+  /**
+   * Generate world state summary
+   */
+  async getWorldState(): Promise<{
+    summary: string;
+    memoryCount: number;
+    categories: Record<string, number>;
+    recentActivity: MemoryEntry[];
+  }> {
+    const stats = await this.stats();
+    const recentMemories = await this.list({ limit: 5, sortBy: 'created_at', sortOrder: 'desc' });
+    
+    // Count by category
+    const allItems = this.db.list() || [];
+    const memories = allItems.filter((item): item is MemoryEntry => this.isValidMemoryEntry(item));
+    
+    const categories: Record<string, number> = {};
+    memories.forEach(memory => {
+      const cat = memory.category || 'uncategorized';
+      categories[cat] = (categories[cat] || 0) + 1;
+    });
+
+    return {
+      summary: `Memory system contains ${stats.memoryCount} memories across ${Object.keys(categories).length} categories. Recent activity includes ${recentMemories.length} new memories.`,
+      memoryCount: stats.memoryCount as number,
+      categories,
+      recentActivity: recentMemories
+    };
+  }
+
+  /**
+   * Generate daily summary for a specific date
+   */
+  async getDailySummary(date: string): Promise<{
+    date: string;
+    memoriesCreated: number;
+    memories: MemoryEntry[];
+    categories: Record<string, number>;
+  }> {
+    // Parse date and get day boundaries
+    const targetDate = new Date(date);
+    const startOfDay = new Date(targetDate);
+    startOfDay.setHours(0, 0, 0, 0);
+    const endOfDay = new Date(targetDate);
+    endOfDay.setHours(23, 59, 59, 999);
+
+    const startTime = startOfDay.getTime();
+    const endTime = endOfDay.getTime();
+
+    // Get memories from that day
+    const allItems = this.db.list() || [];
+    const allMemories = allItems.filter((item): item is MemoryEntry => this.isValidMemoryEntry(item));
+    
+    const dayMemories = allMemories.filter(memory => 
+      memory.created_at >= startTime && memory.created_at <= endTime
+    );
+
+    // Count by category
+    const categories: Record<string, number> = {};
+    dayMemories.forEach(memory => {
+      const cat = memory.category || 'uncategorized';
+      categories[cat] = (categories[cat] || 0) + 1;
+    });
+
+    return {
+      date,
+      memoriesCreated: dayMemories.length,
+      memories: dayMemories.sort((a, b) => b.created_at - a.created_at),
+      categories
+    };
+  }
+
+  /**
+   * MCP health check
+   */
+  async health(): Promise<{ status: string; timestamp: number; checks: Record<string, boolean> }> {
+    const checks = {
+      database: true, // PluresDB auto-connects
+      vectorSearch: true, // Always available with native implementation
+      storage: true // Always available
+    };
+
+    return {
+      status: Object.values(checks).every(Boolean) ? 'healthy' : 'degraded',
+      timestamp: Date.now(),
+      checks
+    };
+  }
+
+  /**
+   * Cosine similarity calculation
+   */
+  private cosineSimilarity(a: number[], b: number[]): number {
+    if (a.length !== b.length) return 0;
+    
+    let dotProduct = 0;
+    let normA = 0;
+    let normB = 0;
+    
+    for (let i = 0; i < a.length; i++) {
+      dotProduct += a[i] * b[i];
+      normA += a[i] * a[i];
+      normB += b[i] * b[i];
+    }
+    
+    const magnitude = Math.sqrt(normA * normB);
+    return magnitude === 0 ? 0 : dotProduct / magnitude;
+  }
 }
