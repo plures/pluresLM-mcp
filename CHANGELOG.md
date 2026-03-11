@@ -1,3 +1,8 @@
+## [2.5.0] — 2026-03-11
+
+- fix: use stateless HTTP transport for multi-client support (8a08337)
+- feat: real StreamableHTTP transport + PLURES_DB_PATH support (49588f5)
+
 ## [2.4.0] — 2026-03-11
 
 - feat: 100% Sprint Log tool parity - complete export/import/DSL tools (0634896)
