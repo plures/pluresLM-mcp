@@ -1,3 +1,7 @@
+## [2.5.1] — 2026-03-11
+
+- fix: enable session tracking — stateless mode breaks tool calls (cfe42e7)
+
 ## [2.5.0] — 2026-03-11
 
 - fix: use stateless HTTP transport for multi-client support (8a08337)
