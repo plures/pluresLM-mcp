@@ -807,9 +807,9 @@ export async function startServer(): Promise<void> {
     const { createServer } = await import('node:http');
     const { randomUUID } = await import('node:crypto');
 
-    // Stateful StreamableHTTP transport — one session per connection
+    // Stateless StreamableHTTP transport — no session tracking, supports multiple clients
     const httpTransport = new StreamableHTTPServerTransport({
-      sessionIdGenerator: () => randomUUID(),
+      sessionIdGenerator: undefined,
     });
 
     const httpServer = createServer((req, res) => {
