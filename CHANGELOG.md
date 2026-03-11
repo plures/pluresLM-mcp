@@ -1,3 +1,7 @@
+## [2.4.0] — 2026-03-11
+
+- feat: 100% Sprint Log tool parity - complete export/import/DSL tools (0634896)
+
 ## [2.3.0] — 2026-03-11
 
 - feat: add Sprint Log compatibility - 13 missing tools (667eee9)
