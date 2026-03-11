@@ -1,3 +1,7 @@
+## [2.6.0] — 2026-03-11
+
+- feat: multi-client session routing for HTTP transport (94d77ff)
+
 ## [2.5.1] — 2026-03-11
 
 - fix: enable session tracking — stateless mode breaks tool calls (cfe42e7)
