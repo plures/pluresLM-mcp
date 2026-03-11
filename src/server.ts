@@ -807,9 +807,9 @@ export async function startServer(): Promise<void> {
     const { createServer } = await import('node:http');
     const { randomUUID } = await import('node:crypto');
 
-    // Stateless StreamableHTTP transport — no session tracking, supports multiple clients
+    // Session-tracked StreamableHTTP transport — each client gets its own session via Mcp-Session-Id header
     const httpTransport = new StreamableHTTPServerTransport({
-      sessionIdGenerator: undefined,
+      sessionIdGenerator: () => randomUUID(),
     });
 
     const httpServer = createServer((req, res) => {
@@ -828,7 +828,13 @@ export async function startServer(): Promise<void> {
 
       // MCP endpoint — delegate to StreamableHTTPServerTransport
       if (req.url === '/mcp') {
-        httpTransport.handleRequest(req, res);
+        httpTransport.handleRequest(req, res).catch((err: unknown) => {
+          console.error('MCP request error:', err);
+          if (!res.headersSent) {
+            res.writeHead(500, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: String(err) }));
+          }
+        });
         return;
       }
 
