@@ -2,8 +2,9 @@ import os from "node:os";
 import path from "node:path";
 
 export interface McpConfig {
-  // PluresDB configuration (replaces dbPath)
-  pluresDbTopic: string;
+  // PluresDB configuration — either path-based or topic-based
+  pluresDbPath?: string;        // Direct DB path (takes priority)
+  pluresDbTopic?: string;       // Topic key → ~/.pluresdb/topics/${topic}
   pluresDbSecret?: string;
   
   // Transport configuration
@@ -30,12 +31,14 @@ function validateTopicKey(topic: string): boolean {
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): McpConfig {
-  // PluresDB topic (required)
+  // PluresDB path takes priority over topic
+  const pluresDbPath = env.PLURES_DB_PATH ? expandHome(env.PLURES_DB_PATH) : undefined;
   const pluresDbTopic = env.PLURES_DB_TOPIC;
-  if (!pluresDbTopic) {
-    throw new Error("PLURES_DB_TOPIC environment variable is required (64-char hex string)");
+
+  if (!pluresDbPath && !pluresDbTopic) {
+    throw new Error("Either PLURES_DB_PATH or PLURES_DB_TOPIC environment variable is required");
   }
-  if (!validateTopicKey(pluresDbTopic)) {
+  if (pluresDbTopic && !validateTopicKey(pluresDbTopic)) {
     throw new Error("PLURES_DB_TOPIC must be a valid 64-character hex string (32 bytes)");
   }
 
@@ -52,6 +55,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): McpConfig {
   const debug = (env.PLURES_LM_DEBUG ?? "").toLowerCase() === "true";
 
   return { 
+    pluresDbPath,
     pluresDbTopic, 
     pluresDbSecret,
     transport,

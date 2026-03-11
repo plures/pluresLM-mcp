@@ -3,6 +3,7 @@ import path from "node:path";
 
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import {
   CallToolRequestSchema,
   ErrorCode,
@@ -90,7 +91,7 @@ export async function startServer(): Promise<void> {
   });
 
   // Connect to PluresDB (replaces SQLite)
-  const db = new MemoryDB(config.pluresDbTopic, config.pluresDbSecret, embeddings.dimension);
+  const db = new MemoryDB({ topic: config.pluresDbTopic, secret: config.pluresDbSecret, dbPath: config.pluresDbPath, dimension: embeddings.dimension });
   await db.connect();
 
   const server = new Server(
@@ -797,77 +798,56 @@ export async function startServer(): Promise<void> {
   });
 
   // ---------------------------------------------------------------------------
-  // Transport + lifecycle (CORRECTED: Simple HTTP with stdio fallback)
+  // Transport + lifecycle
   // ---------------------------------------------------------------------------
 
-  let transport;
+  let transport: StdioServerTransport | StreamableHTTPServerTransport;
   
   if (config.transport === 'sse' || config.transport === 'http') {
-    // Create HTTP server that serves MCP over stdio-like interface
     const { createServer } = await import('node:http');
-    
+    const { randomUUID } = await import('node:crypto');
+
+    // Stateful StreamableHTTP transport — one session per connection
+    const httpTransport = new StreamableHTTPServerTransport({
+      sessionIdGenerator: () => randomUUID(),
+    });
+
     const httpServer = createServer((req, res) => {
+      // Health endpoint
       if (req.url === '/health') {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ 
           status: 'ok', 
           service: 'pluresLM-mcp',
-          version: '2.0.0',
-          transport: 'http',
-          topic: config.pluresDbTopic 
+          version: '2.4.0',
+          dbPath: config.pluresDbPath,
+          topic: config.pluresDbTopic,
         }));
         return;
       }
-      
-      if (req.url === '/mcp' && req.method === 'POST') {
-        // Handle MCP JSON-RPC over HTTP POST
-        let body = '';
-        req.on('data', chunk => { body += chunk.toString(); });
-        req.on('end', async () => {
-          try {
-            const request = JSON.parse(body);
-            // This would need proper MCP request handling
-            res.writeHead(200, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ error: 'MCP over HTTP POST not yet implemented' }));
-          } catch (err) {
-            res.writeHead(400, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ error: 'Invalid JSON' }));
-          }
-        });
+
+      // MCP endpoint — delegate to StreamableHTTPServerTransport
+      if (req.url === '/mcp') {
+        httpTransport.handleRequest(req, res);
         return;
       }
-      
-      // Default response with usage instructions
-      res.writeHead(200, { 'Content-Type': 'text/plain' });
-      res.end(`PluresLM MCP Server v2.0.0
 
-HTTP Endpoints:
-- GET  /health - Health check
-- POST /mcp    - MCP JSON-RPC (not yet implemented)
-
-For full MCP support, use stdio transport:
-PLURES_DB_TOPIC=${config.pluresDbTopic} node dist/index.js
-
-Topic: ${config.pluresDbTopic}
-Transport: ${config.transport}
-`);
+      res.writeHead(404);
+      res.end('Not found. Use POST /mcp for MCP or GET /health');
     });
-    
+
     httpServer.listen(config.port, config.host, () => {
-      console.error(`🚀 PluresLM MCP Server listening on http://${config.host}:${config.port}`);
-      console.error(`   Health Check: http://${config.host}:${config.port}/health`);
-      console.error(`   Topic: ${config.pluresDbTopic}`);
-      console.error(`   Transport: HTTP (limited) - use stdio for full MCP support`);
+      console.error(`🚀 PluresLM MCP Server listening on http://${config.host}:${config.port}/mcp`);
+      console.error(`   Health: http://${config.host}:${config.port}/health`);
+      console.error(`   DB: ${config.pluresDbPath || config.pluresDbTopic}`);
     });
-    
-    // For now, still use stdio for actual MCP communication
-    // HTTP mode provides health checks and future JSON-RPC endpoint
-    transport = new StdioServerTransport();
+
+    transport = httpTransport;
   } else {
     // Default stdio transport
     transport = new StdioServerTransport();
     console.error("🚀 PluresLM MCP Server starting with stdio transport");
-    console.error(`   Topic: ${config.pluresDbTopic}`);
+    console.error(`   DB: ${config.pluresDbPath || config.pluresDbTopic}`);
   }
 
   const shutdown = async () => {

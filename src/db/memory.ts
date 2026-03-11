@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import PluresDatabase, { type VectorSearchItem } from "@plures/pluresdb";
+import { PluresDatabase, type VectorSearchItem } from "@plures/pluresdb";
 
 export interface MemoryEntry {
   id: string;
@@ -50,13 +50,13 @@ export class MemoryDB {
   private db: NativePluresDatabase;
   private dimension: number;
 
-  constructor(topic: string, secret: string | undefined, dimension: number) {
-    this.dimension = dimension;
+  constructor(options: { topic?: string; secret?: string; dbPath?: string; dimension: number }) {
+    this.dimension = options.dimension;
     
-    // Use native PluresDB with vector embeddings support
-    // Topic becomes the actor ID for P2P sync
-    const dbPath = `~/.pluresdb/topics/${topic}`;
-    this.db = new PluresDatabase(topic, dbPath);
+    // Direct path takes priority over topic-derived path
+    const dbPath = options.dbPath || `~/.pluresdb/topics/${options.topic}`;
+    const actorId = options.topic || 'pluresLM';
+    this.db = new PluresDatabase(actorId, dbPath);
   }
 
   async connect() {
