@@ -1,10 +1,10 @@
-import Database from "better-sqlite3";
 import { randomUUID } from "node:crypto";
+import { PluresDB } from "@plures/pluresdb";
 
 export interface MemoryEntry {
   id: string;
   content: string;
-  embedding: string; // JSON stringified array
+  embedding: number[]; // Native array, not JSON string
   tags: string[];
   category?: string;
   source: string;
@@ -30,344 +30,224 @@ export interface SearchResult {
 }
 
 /**
- * Local SQLite-based vector memory database.
- * Supports storage, cosine similarity search, and CRUD operations.
+ * PluresDB-based vector memory database.
+ * Supports storage, cosine similarity search, and distributed sync.
  */
 export class MemoryDB {
-  private db: Database.Database;
+  private db: PluresDB;
   private dimension: number;
 
-  constructor(dbPath: string, dimension: number) {
+  constructor(topic: string, secret: string | undefined, dimension: number) {
     this.dimension = dimension;
-    this.db = new Database(dbPath);
-    this.db.pragma("journal_mode = WAL");
-    this.initTables();
-    this.validateDimension();
+    this.db = new PluresDB({
+      topic,
+      secret,
+      // Use built-in tables for memories
+      tables: {
+        memories: {
+          id: 'string',
+          content: 'string', 
+          embedding: 'json',
+          tags: 'json',
+          category: 'string?',
+          source: 'string',
+          created_at: 'number',
+        },
+        profile: {
+          key: 'string',
+          value: 'string',
+          updated_at: 'number',
+        },
+        stats: {
+          key: 'string',
+          value: 'number',
+          updated_at: 'number',
+        }
+      }
+    });
   }
 
-  private initTables() {
-    // Create memories table
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS memories (
-        id TEXT PRIMARY KEY,
-        content TEXT NOT NULL,
-        embedding TEXT NOT NULL,
-        tags TEXT,
-        category TEXT,
-        source TEXT,
-        created_at INTEGER NOT NULL
-      )
-    `);
+  async connect() {
+    await this.db.connect();
+  }
 
-    // Create metadata table for stats
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS metadata (
-        key TEXT PRIMARY KEY,
-        value TEXT NOT NULL
-      )
-    `);
-
-    // Initialize capture count if not exists
-    const stmt = this.db.prepare("SELECT value FROM metadata WHERE key = ?");
-    const row = stmt.get("capture_count") as { value: string } | undefined;
-    if (!row) {
-      this.db.prepare("INSERT INTO metadata (key, value) VALUES (?, ?)").run(
-        "capture_count",
-        "0"
-      );
-    }
+  close() {
+    this.db.disconnect();
   }
 
   /**
-   * Validate that existing embeddings in the database match the configured dimension.
-   * This prevents dimension mismatches when switching between embedding providers.
+   * Store a memory with embedding and metadata
    */
-  private validateDimension() {
-    const stmt = this.db.prepare("SELECT embedding FROM memories LIMIT 1");
-    const row = stmt.get() as { embedding: string } | undefined;
-
-    if (row) {
-      try {
-        const existingEmbedding = JSON.parse(row.embedding) as number[];
-        if (existingEmbedding.length !== this.dimension) {
-          throw new Error(
-            `Database dimension mismatch: Database contains ${existingEmbedding.length}-dim embeddings, ` +
-            `but configured provider uses ${this.dimension}-dim embeddings. ` +
-            `To fix this, either:\n` +
-            `  1. Set OPENAI_API_KEY to use OpenAI (1536-dim) if database was created with OpenAI\n` +
-            `  2. Use a new database path with SUPERLOCALMEMORY_DB_PATH\n` +
-            `  3. Delete the existing database to start fresh with ${this.dimension}-dim embeddings`
-          );
-        }
-      } catch (err) {
-        if (err instanceof Error && err.message.includes("Database dimension mismatch")) {
-          throw err;
-        }
-        // Ignore JSON parse errors for corrupted data - will be handled during search
+  async store(content: string, embedding: number[], options: StoreOptions = {}): Promise<StoreResult> {
+    const { tags = [], category, source = "", dedupeThreshold = 0.95 } = options;
+    
+    // Check for duplicates using cosine similarity
+    if (dedupeThreshold > 0) {
+      const similar = await this.vectorSearch(embedding, 1, dedupeThreshold);
+      if (similar.length > 0) {
+        const existingEntry = similar[0].entry;
+        return {
+          entry: existingEntry,
+          isDuplicate: true,
+          updatedId: existingEntry.id
+        };
       }
     }
-  }
 
-  /**
-   * Calculate cosine similarity between two vectors
-   */
-  private cosineSimilarity(a: number[], b: number[]): number {
-    if (a.length !== b.length) {
-      throw new Error(`Vector dimension mismatch: ${a.length} vs ${b.length}`);
-    }
-
-    let dotProduct = 0;
-    let normA = 0;
-    let normB = 0;
-
-    for (let i = 0; i < a.length; i++) {
-      dotProduct += a[i] * b[i];
-      normA += a[i] * a[i];
-      normB += b[i] * b[i];
-    }
-
-    const denom = Math.sqrt(normA) * Math.sqrt(normB);
-    return denom === 0 ? 0 : dotProduct / denom;
-  }
-
-  /**
-   * Store a memory with deduplication
-   */
-  async store(
-    content: string,
-    embedding: number[],
-    options: StoreOptions = {}
-  ): Promise<StoreResult> {
-    const {
-      tags = [],
-      category,
-      source = "",
-      dedupeThreshold = 0.95,
-    } = options;
-
-    // Check for duplicates
-    const existing = await this.findSimilar(embedding, dedupeThreshold);
-
-    if (existing) {
-      // Update existing entry
-      const stmt = this.db.prepare(
-        "UPDATE memories SET content = ?, embedding = ?, tags = ?, category = ?, source = ?, created_at = ? WHERE id = ?"
-      );
-      stmt.run(
-        content,
-        JSON.stringify(embedding),
-        JSON.stringify(tags),
-        category || null,
-        source,
-        Date.now(),
-        existing.id
-      );
-
-      return {
-        entry: {
-          ...existing,
-          content,
-          embedding: JSON.stringify(embedding),
-          tags,
-          category,
-          source,
-          created_at: Date.now(),
-        },
-        isDuplicate: true,
-        updatedId: existing.id,
-      };
-    }
-
-    // Insert new entry
     const id = randomUUID();
-    const created_at = Date.now();
-
-    const stmt = this.db.prepare(
-      "INSERT INTO memories (id, content, embedding, tags, category, source, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
-    );
-    stmt.run(
+    const entry: MemoryEntry = {
       id,
       content,
-      JSON.stringify(embedding),
-      JSON.stringify(tags),
-      category || null,
+      embedding,
+      tags,
+      category,
       source,
-      created_at
-    );
+      created_at: Date.now()
+    };
+
+    // Store in PluresDB
+    await this.db.insert('memories', entry);
 
     return {
-      entry: {
-        id,
-        content,
-        embedding: JSON.stringify(embedding),
-        tags,
-        category,
-        source,
-        created_at,
-      },
-      isDuplicate: false,
+      entry,
+      isDuplicate: false
     };
   }
 
   /**
-   * Find a similar memory above threshold (for deduplication)
+   * Vector similarity search using cosine distance
    */
-  private async findSimilar(
-    embedding: number[],
-    threshold: number
-  ): Promise<MemoryEntry | null> {
-    const results = await this.vectorSearch(embedding, 1, threshold);
-    return results.length > 0 ? results[0].entry : null;
-  }
-
-  /**
-   * Vector search using cosine similarity.
-   * 
-   * Performance note: This implementation loads all embeddings into memory and performs
-   * brute-force cosine similarity computation. For large databases (>10,000 memories),
-   * this may have performance implications. Future optimizations could include:
-   * - Approximate nearest neighbor search (ANN)
-   * - Vector indexing (e.g., HNSW, IVF)
-   * - Limiting search scope with filters
-   */
-  async vectorSearch(
-    queryEmbedding: number[],
-    limit = 5,
-    minScore = 0.3
-  ): Promise<SearchResult[]> {
-    const stmt = this.db.prepare("SELECT * FROM memories");
-    const rows = stmt.all() as Array<{
-      id: string;
-      content: string;
-      embedding: string;
-      tags: string;
-      category: string | null;
-      source: string;
-      created_at: number;
-    }>;
-
+  async vectorSearch(queryVector: number[], limit: number = 10, minScore: number = 0.3): Promise<SearchResult[]> {
+    // Get all memories and compute cosine similarity
+    const allMemories = await this.db.select('memories', {});
+    
     const results: SearchResult[] = [];
+    
+    for (const row of allMemories) {
+      const entry: MemoryEntry = {
+        id: row.id as string,
+        content: row.content as string,
+        embedding: row.embedding as number[],
+        tags: (row.tags as string[]) || [],
+        category: row.category as string | undefined,
+        source: row.source as string,
+        created_at: row.created_at as number
+      };
 
-    for (const row of rows) {
-      let embedding: number[];
-      try {
-        embedding = JSON.parse(row.embedding) as number[];
-      } catch (err) {
-        console.warn(
-          `Skipping memory entry with invalid embedding JSON (id=${row.id}):`,
-          err
-        );
-        continue;
-      }
-      const score = this.cosineSimilarity(queryEmbedding, embedding);
-
+      const score = this.cosineSimilarity(queryVector, entry.embedding);
       if (score >= minScore) {
-        results.push({
-          entry: {
-            id: row.id,
-            content: row.content,
-            embedding: row.embedding,
-            tags: JSON.parse(row.tags || "[]") as string[],
-            category: row.category || undefined,
-            source: row.source,
-            created_at: row.created_at,
-          },
-          score,
-        });
+        results.push({ entry, score });
       }
     }
 
-    // Sort by score descending
-    results.sort((a, b) => b.score - a.score);
-
-    // Limit results
-    return results.slice(0, limit);
+    // Sort by score descending and limit
+    return results
+      .sort((a, b) => b.score - a.score)
+      .slice(0, limit);
   }
 
   /**
-   * Delete a memory by ID
+   * Delete memory by ID
    */
-  delete(id: string): void {
-    this.db.prepare("DELETE FROM memories WHERE id = ?").run(id);
+  async delete(id: string): Promise<boolean> {
+    const deleted = await this.db.delete('memories', { id });
+    return deleted > 0;
   }
 
   /**
-   * Delete memories matching a query above threshold
+   * Delete memories by semantic query
    */
-  async deleteByQuery(
-    queryEmbedding: number[],
-    threshold = 0.8
-  ): Promise<number> {
-    const matches = await this.vectorSearch(queryEmbedding, 100, threshold);
+  async deleteByQuery(queryVector: number[], threshold: number = 0.8): Promise<number> {
+    const matches = await this.vectorSearch(queryVector, 100, threshold);
+    
     let deleted = 0;
-
     for (const match of matches) {
-      this.delete(match.entry.id);
-      deleted++;
+      if (await this.delete(match.entry.id)) {
+        deleted++;
+      }
     }
-
+    
     return deleted;
   }
 
   /**
-   * Get user profile (stub - not implemented in core)
+   * Get stored profile data
    */
-  getProfile(): string | null {
-    const stmt = this.db.prepare("SELECT value FROM metadata WHERE key = ?");
-    const row = stmt.get("profile") as { value: string } | undefined;
-    return row ? row.value : null;
+  async getProfile(): Promise<Record<string, string> | null> {
+    const rows = await this.db.select('profile', {});
+    if (rows.length === 0) return null;
+    
+    const profile: Record<string, string> = {};
+    for (const row of rows) {
+      profile[row.key as string] = row.value as string;
+    }
+    return profile;
   }
 
   /**
-   * Get all memory content (limited)
+   * Get recent memory content for context
    */
-  getAllContent(limit = 20): string[] {
-    const stmt = this.db.prepare(
-      "SELECT content FROM memories ORDER BY created_at DESC LIMIT ?"
-    );
-    const rows = stmt.all(limit) as Array<{ content: string }>;
-    return rows.map((r) => r.content);
+  async getAllContent(limit: number = 20): Promise<string[]> {
+    const rows = await this.db.select('memories', {}, {
+      orderBy: [['created_at', 'desc']],
+      limit
+    });
+    
+    return rows.map(row => row.content as string);
   }
 
   /**
    * Get database statistics
    */
-  stats(): {
-    totalMemories: number;
-    captureCount: number;
-    dimension: number;
-  } {
-    const countStmt = this.db.prepare("SELECT COUNT(*) as count FROM memories");
-    const countRow = countStmt.get() as { count: number };
-
-    const captureStmt = this.db.prepare(
-      "SELECT value FROM metadata WHERE key = ?"
-    );
-    const captureRow = captureStmt.get("capture_count") as
-      | { value: string }
-      | undefined;
-
+  async stats(): Promise<Record<string, unknown>> {
+    const memoryCount = await this.db.count('memories');
+    const profileCount = await this.db.count('profile');
+    
     return {
-      totalMemories: countRow.count,
-      captureCount: captureRow ? parseInt(captureRow.value, 10) : 0,
+      version: "2.0.0-pluresdb",
+      backend: "PluresDB",
+      memoryCount,
+      profileCount,
       dimension: this.dimension,
+      sync: {
+        topic: this.db.getTopic(),
+        connected: this.db.isConnected(),
+        peerCount: this.db.getPeerCount()
+      }
     };
   }
 
   /**
-   * Increment capture count
+   * Increment capture count statistic
    */
-  incrementCaptureCount(): void {
-    const stmt = this.db.prepare(
-      "UPDATE metadata SET value = CAST((CAST(value AS INTEGER) + 1) AS TEXT) WHERE key = ?"
-    );
-    stmt.run("capture_count");
+  async incrementCaptureCount(): Promise<void> {
+    const existing = await this.db.select('stats', { key: 'captureCount' });
+    const current = existing.length > 0 ? (existing[0].value as number) : 0;
+    
+    await this.db.upsert('stats', {
+      key: 'captureCount',
+      value: current + 1,
+      updated_at: Date.now()
+    });
   }
 
   /**
-   * Close database connection
+   * Compute cosine similarity between two vectors
    */
-  close(): void {
-    this.db.close();
+  private cosineSimilarity(a: number[], b: number[]): number {
+    if (a.length !== b.length) return 0;
+    
+    let dotProduct = 0;
+    let normA = 0;
+    let normB = 0;
+    
+    for (let i = 0; i < a.length; i++) {
+      dotProduct += a[i] * b[i];
+      normA += a[i] * a[i];
+      normB += b[i] * b[i];
+    }
+    
+    const magnitude = Math.sqrt(normA * normB);
+    return magnitude === 0 ? 0 : dotProduct / magnitude;
   }
 }

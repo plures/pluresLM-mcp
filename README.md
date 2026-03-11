@@ -1,228 +1,181 @@
-# @plures/pluresLM-mcp
+# PluresLM MCP Service
 
-MCP (Model Context Protocol) server for **pluresLM** — a **local-first, persistent vector memory** for AI coding assistants.
+**Distributed vector memory service for AI assistants powered by PluresDB.**
 
-It exposes a small set of MCP **tools** and **resources** so editors like VS Code (Copilot MCP), Cursor, Continue, and Claude Desktop can store and recall long-term memory during coding sessions.
+PluresLM MCP provides persistent vector memory with P2P synchronization across devices. Built on [PluresDB](https://github.com/plures/pluresdb) for distributed data and [Model Context Protocol](https://modelcontextprotocol.io/) for AI tool integration.
 
-- Storage: local SQLite file (better-sqlite3)
-- Retrieval: semantic vector search
-- Embeddings: **Transformers.js (default, zero-config)** or OpenAI (optional)
+## Features
 
-## ✨ Zero-Config Usage
+- 🧠 **Persistent vector memory** - Semantic search across conversation history
+- 🌐 **P2P synchronization** - Share memories across devices via Hyperswarm
+- 🔧 **MCP protocol** - Standard interface for AI assistant integration  
+- 🚀 **Multiple transports** - stdio, SSE/HTTP for different deployment needs
+- 📦 **Zero-knowledge** - No central servers, encrypted P2P mesh
+- 🛠️ **Project indexing** - Ingest codebases for context-aware assistance
 
-**No API keys required!** Just run:
+## Quick Start
+
+### Local Development (stdio)
 
 ```bash
-npx @plures/pluresLM-mcp
+npm install
+npm run build
+
+# Set PluresDB topic (generate with: openssl rand -hex 32)
+export PLURES_DB_TOPIC="your-64-char-hex-topic-key"
+
+# Start stdio MCP server
+npm start
 ```
 
-The server uses **Transformers.js** to run embeddings locally in-process with the `bge-small-en-v1.5` model (384 dimensions).
-
-> **Note:** First run will download the model (~100MB) to `~/.cache/pluresLM/transformers`. Subsequent runs are instant and fully offline.
-
-## Install
+### Remote Service (HTTP/SSE)
 
 ```bash
-# Run directly (recommended):
-npx @plures/pluresLM-mcp
+# Configure for HTTP transport
+export MCP_TRANSPORT=sse
+export PORT=3001
+export HOST=0.0.0.0
+export PLURES_DB_TOPIC="your-topic-key"
 
-# Or install globally:
-npm install -g @plures/pluresLM-mcp
+# Start HTTP service
+npm start
+# → Serving on http://0.0.0.0:3001/sse
 ```
 
 ## Configuration
 
-All configuration is **optional**:
-
 ### Environment Variables
 
-- `pluresLM_DB_PATH` (optional) — SQLite DB path (default: `~/.pluresLM/mcp.db`)
-- `pluresLM_DEBUG` (optional) — set to `true` for debug logs to stderr
-- `pluresLM_CACHE_DIR` (optional) — Transformers.js model cache directory (default: `~/.cache/pluresLM/transformers`)
-- `OPENAI_API_KEY` (optional) — use OpenAI embeddings instead of local Transformers.js
-- `OPENAI_EMBEDDING_MODEL` (optional) — OpenAI model to use (default: `text-embedding-3-small`)
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `PLURES_DB_TOPIC` | ✅ | 64-char hex string (32 bytes) for PluresDB mesh |
+| `PLURES_DB_SECRET` | ❌ | Optional encryption secret for mesh |
+| `MCP_TRANSPORT` | ❌ | `stdio` (default) or `sse` for HTTP |
+| `PORT` | ❌ | HTTP port when using SSE transport (default: 3001) |
+| `HOST` | ❌ | HTTP host (default: 0.0.0.0) |
+| `OPENAI_API_KEY` | ❌ | OpenAI key for embeddings (falls back to local Transformers.js) |
+| `OPENAI_EMBEDDING_MODEL` | ❌ | OpenAI model name (default: text-embedding-3-small) |
+| `PLURES_LM_DEBUG` | ❌ | Enable debug logging (true/false) |
 
-### Using OpenAI (Optional)
+### OpenClaw Integration
 
-If you prefer OpenAI embeddings over local Transformers.js:
-
-1. Set `OPENAI_API_KEY` in your environment
-2. The server will use OpenAI with 1536-dim embeddings
-
-## Migration / Breaking Changes
-
-> **Important:** Embedding dimensions are **not** interchangeable. Transformers.js uses **384‑dim** embeddings, while OpenAI uses **1536‑dim** embeddings by default.
-
-If you already have an existing database:
-
-- **Databases created with OpenAI embeddings must continue using `OPENAI_API_KEY`.**
-  - Do **not** switch that database to Transformers.js; the stored vectors will be incompatible.
-  - The server will detect dimension mismatches and provide a clear error message.
-- There is **no automatic migration** between 384‑dim and 1536‑dim embeddings.
-- To change providers (OpenAI ⇄ Transformers.js), you must either:
-  - Point `pluresLM_DB_PATH` to a **new database**, or
-  - Delete/recreate the existing DB and **re-index all memories**.
-## Editor setup
-
-### Zero-Config Examples
-
-These examples require **no environment variables** and work out of the box:
-
-#### VS Code (Copilot) — `mcp.json`
-
+#### Local (stdio):
 ```json
 {
   "mcpServers": {
     "pluresLM": {
-      "command": "npx",
-      "args": ["@plures/pluresLM-mcp"]
-    }
-  }
-}
-```
-
-#### Cursor — `settings.json`
-
-```json
-{
-  "mcpServers": {
-    "pluresLM": {
-      "command": "npx",
-      "args": ["@plures/pluresLM-mcp"]
-    }
-  }
-}
-```
-
-#### Continue.dev — `config.json`
-
-```json
-{
-  "mcpServers": [
-    {
-      "name": "pluresLM",
-      "command": "npx",
-      "args": ["@plures/pluresLM-mcp"]
-    }
-  ]
-}
-```
-
-#### Claude Desktop — `claude_desktop_config.json`
-
-```json
-{
-  "mcpServers": {
-    "pluresLM": {
-      "command": "npx",
-      "args": ["@plures/pluresLM-mcp"]
-    }
-  }
-}
-```
-
-### With OpenAI (Optional)
-
-If you prefer OpenAI embeddings:
-
-```json
-{
-  "mcpServers": {
-    "pluresLM": {
-      "command": "npx",
-      "args": ["@plures/pluresLM-mcp"],
+      "command": "node", 
+      "args": ["path/to/pluresLM-mcp/dist/index.js"],
       "env": {
-        "OPENAI_API_KEY": "your-key"
+        "PLURES_DB_TOPIC": "your-topic-key"
       }
     }
   }
 }
 ```
 
+#### Remote (SSE):
+```json
+{
+  "mcpServers": {
+    "pluresLM": {
+      "transport": {
+        "type": "sse",
+        "url": "http://memory-service:3001/sse" 
+      }
+    }
+  }
+}
+```
+
+## Architecture
+
+### PluresDB Backend
+
+PluresLM v2.0+ uses **pure PluresDB** for storage and synchronization:
+
+- **No SQLite dependencies** - Distributed-first design
+- **Hyperswarm P2P mesh** - Direct device-to-device sync
+- **Embedded vector search** - Cosine similarity in-memory
+- **Conflict-free replication** - CRDTs for distributed consistency
+
+### Transport Options
+
+1. **stdio** (default) - Process pipes for local OpenClaw integration
+2. **sse** - Server-Sent Events over HTTP for remote/clustered deployments
+
+### Memory Sync
+
+All devices sharing the same `PLURES_DB_TOPIC` automatically sync memories:
+
+```bash
+# Device 1
+export PLURES_DB_TOPIC="abc123..." 
+npm start  # Stores memories locally
+
+# Device 2  
+export PLURES_DB_TOPIC="abc123..."  # Same topic
+npm start  # Automatically receives Device 1's memories
+```
+
 ## Tools
 
-### `memory_store`
-Store a memory.
+PluresLM MCP exposes these tools for AI assistants:
 
-**Input**
-- `content` (string, required)
-- `tags` (string[], optional)
-- `category` (string, optional)
-- `source` (string, optional)
+- `pluresLM_store(content, tags?, category?, source?)` - Store new memory
+- `pluresLM_search(query, limit?, minScore?)` - Semantic search  
+- `pluresLM_forget(id? | query?, threshold?)` - Delete memories
+- `pluresLM_index(directory, maxFiles?, category?, tags?)` - Index codebase
+- `pluresLM_status()` - Database stats + sync status
+- `pluresLM_profile()` - User profile data
 
-### `memory_search`
-Semantic search.
+## Deployment
 
-**Input**
-- `query` (string, required)
-- `limit` (number, optional, default 5)
-- `minScore` (number, optional, default 0.3)
+### Connect-msWork Fleet
 
-### `memory_forget`
-Delete by UUID `id` or by semantic `query`.
-
-**Input**
-- `id` (string, optional)
-- `query` (string, optional)
-- `threshold` (number, optional, default 0.8)
-
-### `memory_profile`
-Return the stored user profile summary (if any).
-
-### `memory_index`
-Index a directory by storing file contents as memories.
-
-**Input**
-- `directory` (string, required)
-- `maxFiles` (number, optional, default 500)
-- `maxBytesPerFile` (number, optional, default 200000)
-- `category` (string, optional, default `project-context`)
-- `tags` (string[], optional)
-
-### `memory_stats`
-Return database stats.
-
-## Resources
-
-- `memory://profile` — JSON user profile (if available)
-- `memory://recent` — markdown list of the 20 most recent memory contents
-- `memory://stats` — JSON stats
-
-## How it works
-
-This server provides local-first persistent memory with:
-
-- **Local SQLite database** stores memory rows with embeddings
-- **Embeddings**: 
-  - Default: Transformers.js (`bge-small-en-v1.5`, 384-dim) — runs in-process, zero-config
-  - Optional: OpenAI API (`text-embedding-3-small`, 1536-dim) — requires API key
-- **Vector search**: In-process cosine similarity against stored embeddings
-- **Indexing**: `memory_index` walks a directory, reads text files, and stores them for later retrieval
-
-## Privacy
-
-All memory data is stored **locally** on your machine at `pluresLM_DB_PATH` (default: `~/.pluresLM/mcp.db`).
-
-### Network Usage
-
-- **Transformers.js (default)**: One-time model download (~100MB) on first run, then 100% offline
-- **OpenAI (optional)**: API calls for each embedding when `OPENAI_API_KEY` is set
-
-No memory content is ever sent to external services except for embedding generation when using OpenAI.
-
-## Development
+For enterprise deployments across multiple OpenClaw instances:
 
 ```bash
-npm install
-npm run dev
+# Memory service (dedicated server)
+docker run -p 3001:3001 -e MCP_TRANSPORT=sse plures/pluresLM-mcp
+
+# Worker instances (point to service)
+export MCP_TRANSPORT=sse
+export PLURES_LM_SERVICE_URL=http://memory-service:3001/sse
 ```
 
-Build:
+### High Availability
 
 ```bash
-npm run build
+# Multiple services with shared PluresDB topic
+docker-compose up -d  # Load balancer → N service instances
 ```
+
+## Migration from v1.x
+
+PluresLM v2.0 is a **breaking change** from SQLite-based v1.x:
+
+### What Changed
+- ❌ **Removed**: All SQLite/better-sqlite3 dependencies
+- ✅ **Added**: PluresDB distributed storage  
+- ✅ **Added**: P2P mesh synchronization
+- ✅ **Added**: SSE/HTTP transport option
+- 🔄 **Changed**: Tool names (`memory_*` → `pluresLM_*`)
+- 🔄 **Changed**: Configuration (file paths → topic keys)
+
+### Migration Path
+1. Export v1.x data: `pluresLM_export_bundle`
+2. Deploy v2.0 with PluresDB topic
+3. Import data: `pluresLM_import_bundle` 
+
+*Note: Direct file migration not supported due to schema differences.*
 
 ## License
 
-AGPL-3.0
+AGPL-3.0 - See [LICENSE](LICENSE)
+
+## Links
+
+- [PluresDB](https://github.com/plures/pluresdb) - Distributed database engine
+- [Model Context Protocol](https://modelcontextprotocol.io/) - AI tool standard  
+- [OpenClaw](https://openclaw.ai/) - AI assistant platform

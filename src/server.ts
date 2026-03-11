@@ -3,6 +3,7 @@ import path from "node:path";
 
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
 import {
   CallToolRequestSchema,
   ErrorCode,
@@ -35,11 +36,6 @@ function asStringArray(v: unknown): string[] | undefined {
   if (v === undefined || v === null) return undefined;
   if (!Array.isArray(v)) throw new McpError(ErrorCode.InvalidParams, "Expected an array");
   return v.map((x) => String(x));
-}
-
-async function ensureParentDir(filePath: string): Promise<void> {
-  const dir = path.dirname(filePath);
-  await fs.mkdir(dir, { recursive: true });
 }
 
 async function* walkDir(root: string, opts?: { ignore?: string[] }): AsyncGenerator<string> {
@@ -86,7 +82,6 @@ function shouldIndexFile(filePath: string): boolean {
 
 export async function startServer(): Promise<void> {
   const config = loadConfig();
-  await ensureParentDir(config.dbPath);
 
   // Create embeddings provider (defaults to Transformers.js, optional OpenAI)
   const embeddings = await createEmbeddings({
@@ -95,29 +90,31 @@ export async function startServer(): Promise<void> {
     debug: config.debug,
   });
 
-  const db = new MemoryDB(config.dbPath, embeddings.dimension);
+  // Connect to PluresDB (replaces SQLite)
+  const db = new MemoryDB(config.pluresDbTopic, config.pluresDbSecret, embeddings.dimension);
+  await db.connect();
 
   const server = new Server(
-    { name: "superlocalmemory-mcp", version: "0.1.0" },
+    { name: "pluresLM-mcp", version: "2.0.0" },
     {
       capabilities: {
         tools: {},
         resources: {},
       },
       instructions:
-        "Persistent local vector memory backed by SQLite. Use memory_store to save, memory_search to recall, and memory_index to ingest a codebase.",
+        "Persistent distributed vector memory backed by PluresDB. Use pluresLM_store to save, pluresLM_search to recall, and pluresLM_index to ingest a codebase. Supports P2P sync across devices.",
     },
   );
 
   // ---------------------------------------------------------------------------
-  // Tools
+  // Tools (Updated names to match PluresLM v2.0 convention)
   // ---------------------------------------------------------------------------
 
   server.setRequestHandler(ListToolsRequestSchema, async () => {
     return {
       tools: [
         {
-          name: "memory_store",
+          name: "pluresLM_store",
           description: "Store a memory (content) with optional tags and category.",
           inputSchema: {
             type: "object",
@@ -131,7 +128,7 @@ export async function startServer(): Promise<void> {
           },
         },
         {
-          name: "memory_search",
+          name: "pluresLM_search",
           description: "Semantic search across memories.",
           inputSchema: {
             type: "object",
@@ -144,7 +141,7 @@ export async function startServer(): Promise<void> {
           },
         },
         {
-          name: "memory_forget",
+          name: "pluresLM_forget",
           description: "Delete memories by exact id OR by semantic query.",
           inputSchema: {
             type: "object",
@@ -156,14 +153,14 @@ export async function startServer(): Promise<void> {
           },
         },
         {
-          name: "memory_profile",
+          name: "pluresLM_profile",
           description: "Get the stored user profile summary (if any).",
           inputSchema: { type: "object", properties: {} },
         },
         {
-          name: "memory_index",
+          name: "pluresLM_index",
           description:
-            "Index a project directory by storing file contents as memories (local only). Skips common large/irrelevant folders.",
+            "Index a project directory by storing file contents as memories. Skips common large/irrelevant folders.",
           inputSchema: {
             type: "object",
             properties: {
@@ -177,8 +174,13 @@ export async function startServer(): Promise<void> {
           },
         },
         {
-          name: "memory_stats",
-          description: "Get memory database statistics.",
+          name: "pluresLM_status",
+          description: "Get memory database statistics and sync status.",
+          inputSchema: { type: "object", properties: {} },
+        },
+        {
+          name: "pluresLM_sync_status",
+          description: "Get P2P sync status (peer count, connectivity).",
           inputSchema: { type: "object", properties: {} },
         },
       ],
@@ -190,7 +192,7 @@ export async function startServer(): Promise<void> {
     const args = (request.params.arguments ?? {}) as JsonObject;
 
     try {
-      if (name === "memory_store") {
+      if (name === "pluresLM_store") {
         const content = String(args.content ?? "").trim();
         if (!content) throw new McpError(ErrorCode.InvalidParams, "content is required");
 
@@ -200,7 +202,7 @@ export async function startServer(): Promise<void> {
 
         const embedding = await embeddings.embed(content);
         const stored = await db.store(content, embedding, { tags, category, source });
-        db.incrementCaptureCount();
+        await db.incrementCaptureCount();
 
         return textResult({
           id: stored.entry.id,
@@ -213,7 +215,7 @@ export async function startServer(): Promise<void> {
         });
       }
 
-      if (name === "memory_search") {
+      if (name === "pluresLM_search") {
         const query = String(args.query ?? "").trim();
         if (!query) throw new McpError(ErrorCode.InvalidParams, "query is required");
 
@@ -237,14 +239,14 @@ export async function startServer(): Promise<void> {
         });
       }
 
-      if (name === "memory_forget") {
+      if (name === "pluresLM_forget") {
         const id = args.id !== undefined ? String(args.id) : undefined;
         const query = args.query !== undefined ? String(args.query).trim() : undefined;
         const threshold = args.threshold !== undefined ? Number(args.threshold) : 0.8;
 
         if (id) {
-          db.delete(id);
-          return textResult({ deleted: 1, mode: "id", id });
+          const deleted = await db.delete(id);
+          return textResult({ deleted: deleted ? 1 : 0, mode: "id", id });
         }
 
         if (query) {
@@ -256,16 +258,17 @@ export async function startServer(): Promise<void> {
         throw new McpError(ErrorCode.InvalidParams, "Provide either id or query");
       }
 
-      if (name === "memory_profile") {
-        const profile = db.getProfile();
+      if (name === "pluresLM_profile") {
+        const profile = await db.getProfile();
         return textResult({ profile });
       }
 
-      if (name === "memory_stats") {
-        return textResult(db.stats());
+      if (name === "pluresLM_status" || name === "pluresLM_sync_status") {
+        const stats = await db.stats();
+        return textResult(stats);
       }
 
-      if (name === "memory_index") {
+      if (name === "pluresLM_index") {
         const directory = String(args.directory ?? "");
         if (!directory) throw new McpError(ErrorCode.InvalidParams, "directory is required");
 
@@ -334,21 +337,21 @@ export async function startServer(): Promise<void> {
     return {
       resources: [
         {
-          uri: "memory://profile",
+          uri: "pluresLM://profile",
           name: "profile",
           description: "User profile summary (if available).",
           mimeType: "application/json",
         },
         {
-          uri: "memory://recent",
+          uri: "pluresLM://recent",
           name: "recent",
           description: "Recent memory contents (last 20).",
           mimeType: "text/markdown",
         },
         {
-          uri: "memory://stats",
+          uri: "pluresLM://stats", 
           name: "stats",
-          description: "Memory database statistics.",
+          description: "Memory database statistics and P2P sync status.",
           mimeType: "application/json",
         },
       ],
@@ -358,8 +361,8 @@ export async function startServer(): Promise<void> {
   server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
     const uri = request.params.uri;
 
-    if (uri === "memory://profile") {
-      const profile = db.getProfile();
+    if (uri === "pluresLM://profile") {
+      const profile = await db.getProfile();
       return {
         contents: [
           {
@@ -371,8 +374,8 @@ export async function startServer(): Promise<void> {
       };
     }
 
-    if (uri === "memory://stats") {
-      const stats = db.stats();
+    if (uri === "pluresLM://stats") {
+      const stats = await db.stats();
       return {
         contents: [
           {
@@ -384,8 +387,8 @@ export async function startServer(): Promise<void> {
       };
     }
 
-    if (uri === "memory://recent") {
-      const items = db.getAllContent(20);
+    if (uri === "pluresLM://recent") {
+      const items = await db.getAllContent(20);
       const md = [
         "# Recent memories",
         "",
@@ -407,21 +410,38 @@ export async function startServer(): Promise<void> {
   });
 
   // ---------------------------------------------------------------------------
-  // Transport + lifecycle
+  // Transport + lifecycle (NEW: SSE/HTTP Support!)
   // ---------------------------------------------------------------------------
 
-  const transport = new StdioServerTransport();
+  let transport;
+  
+  if (config.transport === 'sse' || config.transport === 'http') {
+    // Use SSE transport for HTTP-based connections
+    transport = new SSEServerTransport("/sse", {
+      host: config.host,
+      port: config.port
+    });
+    
+    console.error(`🚀 PluresLM MCP Server starting on http://${config.host}:${config.port}/sse`);
+    console.error(`   Topic: ${config.pluresDbTopic}`);
+    console.error(`   Transport: SSE/HTTP`);
+  } else {
+    // Default to stdio transport
+    transport = new StdioServerTransport();
+    console.error("🚀 PluresLM MCP Server starting with stdio transport");
+    console.error(`   Topic: ${config.pluresDbTopic}`);
+  }
 
   const shutdown = async () => {
     try {
       await transport.close();
-    } catch {
-      // ignore
+    } catch (err) {
+      console.error("Error closing transport:", err);
     }
     try {
       db.close();
-    } catch {
-      // ignore
+    } catch (err) {
+      console.error("Error closing database:", err);
     }
   };
 
