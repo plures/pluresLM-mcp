@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { PluresDB } from "@plures/pluresdb";
+import PluresDatabase from "@plures/pluresdb";
 
 export interface MemoryEntry {
   id: string;
@@ -30,58 +30,38 @@ export interface SearchResult {
 }
 
 /**
- * PluresDB-based vector memory database.
- * Supports storage, cosine similarity search, and distributed sync.
+ * PluresDB-based vector memory database with native HNSW vector search.
+ * Supports high-performance vector similarity search and distributed P2P sync.
  */
 export class MemoryDB {
-  private db: PluresDB;
+  private db: any; // Native PluresDB instance
   private dimension: number;
 
   constructor(topic: string, secret: string | undefined, dimension: number) {
     this.dimension = dimension;
-    this.db = new PluresDB({
-      topic,
-      secret,
-      // Use built-in tables for memories
-      tables: {
-        memories: {
-          id: 'string',
-          content: 'string', 
-          embedding: 'json',
-          tags: 'json',
-          category: 'string?',
-          source: 'string',
-          created_at: 'number',
-        },
-        profile: {
-          key: 'string',
-          value: 'string',
-          updated_at: 'number',
-        },
-        stats: {
-          key: 'string',
-          value: 'number',
-          updated_at: 'number',
-        }
-      }
-    });
+    
+    // Use native PluresDB with vector embeddings support
+    // Topic becomes the actor ID for P2P sync
+    const dbPath = `~/.pluresdb/topics/${topic}`;
+    this.db = new PluresDatabase(topic, dbPath);
   }
 
   async connect() {
-    await this.db.connect();
+    // PluresDB connects automatically on instantiation
+    return Promise.resolve();
   }
 
   close() {
-    this.db.disconnect();
+    // Native PluresDB handles cleanup automatically
   }
 
   /**
-   * Store a memory with embedding and metadata
+   * Store a memory with embedding using PluresDB's native vector indexing
    */
   async store(content: string, embedding: number[], options: StoreOptions = {}): Promise<StoreResult> {
     const { tags = [], category, source = "", dedupeThreshold = 0.95 } = options;
     
-    // Check for duplicates using cosine similarity
+    // Check for duplicates using PluresDB's native vector search
     if (dedupeThreshold > 0) {
       const similar = await this.vectorSearch(embedding, 1, dedupeThreshold);
       if (similar.length > 0) {
@@ -105,8 +85,8 @@ export class MemoryDB {
       created_at: Date.now()
     };
 
-    // Store in PluresDB
-    await this.db.insert('memories', entry);
+    // Store with native embedding indexing - this enables HNSW vector search
+    const txnId = this.db.putWithEmbedding(id, entry, embedding);
 
     return {
       entry,
@@ -115,47 +95,53 @@ export class MemoryDB {
   }
 
   /**
-   * Vector similarity search using cosine distance
+   * High-performance vector similarity search using PluresDB's native HNSW index
+   * This scales to 100k+ memories efficiently (O(log n) instead of O(n))
    */
   async vectorSearch(queryVector: number[], limit: number = 10, minScore: number = 0.3): Promise<SearchResult[]> {
-    // Get all memories and compute cosine similarity
-    const allMemories = await this.db.select('memories', {});
+    // Use PluresDB's native vectorSearch - this uses HNSW indexing for scalability
+    const nativeResults = this.db.vectorSearch(queryVector, limit, minScore);
     
     const results: SearchResult[] = [];
     
-    for (const row of allMemories) {
-      const entry: MemoryEntry = {
-        id: row.id as string,
-        content: row.content as string,
-        embedding: row.embedding as number[],
-        tags: (row.tags as string[]) || [],
-        category: row.category as string | undefined,
-        source: row.source as string,
-        created_at: row.created_at as number
-      };
-
-      const score = this.cosineSimilarity(queryVector, entry.embedding);
-      if (score >= minScore) {
-        results.push({ entry, score });
+    for (const item of nativeResults) {
+      // Convert native result to our SearchResult format
+      const entry = item.data as MemoryEntry;
+      
+      // Ensure the entry has the expected structure
+      if (entry && typeof entry === 'object' && 'id' in entry && 'content' in entry) {
+        results.push({
+          entry: {
+            id: entry.id,
+            content: entry.content,
+            embedding: entry.embedding || [],
+            tags: entry.tags || [],
+            category: entry.category,
+            source: entry.source || '',
+            created_at: entry.created_at || 0
+          },
+          score: item.score
+        });
       }
     }
 
-    // Sort by score descending and limit
-    return results
-      .sort((a, b) => b.score - a.score)
-      .slice(0, limit);
+    return results;
   }
 
   /**
    * Delete memory by ID
    */
   async delete(id: string): Promise<boolean> {
-    const deleted = await this.db.delete('memories', { id });
-    return deleted > 0;
+    try {
+      this.db.delete(id);
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   /**
-   * Delete memories by semantic query
+   * Delete memories by semantic query using native vector search
    */
   async deleteByQuery(queryVector: number[], threshold: number = 0.8): Promise<number> {
     const matches = await this.vectorSearch(queryVector, 100, threshold);
@@ -174,12 +160,16 @@ export class MemoryDB {
    * Get stored profile data
    */
   async getProfile(): Promise<Record<string, string> | null> {
-    const rows = await this.db.select('profile', {});
-    if (rows.length === 0) return null;
+    // Search for profile entries by type
+    const profileItems = this.db.listByType('profile') || [];
+    
+    if (profileItems.length === 0) return null;
     
     const profile: Record<string, string> = {};
-    for (const row of rows) {
-      profile[row.key as string] = row.value as string;
+    for (const item of profileItems) {
+      if (item && typeof item === 'object' && 'key' in item && 'value' in item) {
+        profile[item.key as string] = item.value as string;
+      }
     }
     return profile;
   }
@@ -188,32 +178,40 @@ export class MemoryDB {
    * Get recent memory content for context
    */
   async getAllContent(limit: number = 20): Promise<string[]> {
-    const rows = await this.db.select('memories', {}, {
-      orderBy: [['created_at', 'desc']],
-      limit
-    });
+    // Get all memory items and sort by timestamp
+    const allItems = this.db.list() || [];
     
-    return rows.map(row => row.content as string);
+    const memories = allItems
+      .filter((item: any) => item && item.content && typeof item.content === 'string')
+      .sort((a: any, b: any) => (b.created_at || 0) - (a.created_at || 0))
+      .slice(0, limit);
+    
+    return memories.map((item: any) => item.content as string);
   }
 
   /**
-   * Get database statistics
+   * Get database statistics including native PluresDB metrics
    */
   async stats(): Promise<Record<string, unknown>> {
-    const memoryCount = await this.db.count('memories');
-    const profileCount = await this.db.count('profile');
+    const nativeStats = this.db.stats() || {};
+    const allItems = this.db.list() || [];
+    
+    const memoryCount = allItems.filter((item: any) => 
+      item && item.content && typeof item.content === 'string'
+    ).length;
+    
+    const profileCount = this.db.listByType('profile')?.length || 0;
     
     return {
-      version: "2.0.0-pluresdb",
-      backend: "PluresDB",
+      version: "2.0.0-pluresdb-native",
+      backend: "PluresDB-Native-HNSW",
       memoryCount,
       profileCount,
       dimension: this.dimension,
-      sync: {
-        topic: this.db.getTopic(),
-        connected: this.db.isConnected(),
-        peerCount: this.db.getPeerCount()
-      }
+      vectorIndexing: "HNSW",
+      scalability: "O(log n)",
+      actorId: this.db.getActorId(),
+      native: nativeStats
     };
   }
 
@@ -221,33 +219,17 @@ export class MemoryDB {
    * Increment capture count statistic
    */
   async incrementCaptureCount(): Promise<void> {
-    const existing = await this.db.select('stats', { key: 'captureCount' });
-    const current = existing.length > 0 ? (existing[0].value as number) : 0;
+    const statsId = "captureCount";
+    const existing = this.db.get(statsId);
+    const current = (existing && typeof existing === 'object' && 'count' in existing) 
+      ? (existing.count as number) 
+      : 0;
     
-    await this.db.upsert('stats', {
+    this.db.put(statsId, {
+      type: 'stat',
       key: 'captureCount',
-      value: current + 1,
+      count: current + 1,
       updated_at: Date.now()
     });
-  }
-
-  /**
-   * Compute cosine similarity between two vectors
-   */
-  private cosineSimilarity(a: number[], b: number[]): number {
-    if (a.length !== b.length) return 0;
-    
-    let dotProduct = 0;
-    let normA = 0;
-    let normB = 0;
-    
-    for (let i = 0; i < a.length; i++) {
-      dotProduct += a[i] * b[i];
-      normA += a[i] * a[i];
-      normB += b[i] * b[i];
-    }
-    
-    const magnitude = Math.sqrt(normA * normB);
-    return magnitude === 0 ? 0 : dotProduct / magnitude;
   }
 }

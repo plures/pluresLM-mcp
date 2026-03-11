@@ -36,18 +36,18 @@
     "prepublishOnly": "npm run build"
   },
   "dependencies": {
+    "@huggingface/transformers": "^3.8.1",
     "@modelcontextprotocol/sdk": "^1.26.0",
-    "@plures/pluresdb": "^0.3.0",
-    "zod": "^3.25.76",
-    "@huggingface/transformers": "^3.8.1"
+    "@plures/pluresdb": "file:../pluresdb",
+    "zod": "^3.25.76"
   },
   "optionalDependencies": {
     "openai": "^6.18.0"
   },
   "devDependencies": {
-    "typescript": "^5.7.0",
+    "@types/node": "^22.0.0",
     "tsx": "^4.0.0",
-    "@types/node": "^22.0.0"
+    "typescript": "^5.7.0"
   },
   "engines": {
     "node": ">=18"
