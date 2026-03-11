@@ -1,3 +1,8 @@
+## [2.1.1] — 2026-03-11
+
+- fix: syntax error in config.ts and correct HTTP transport (be9895c)
+- docs: add complete v2.0 architecture reference (55b91de)
+
 ## [2.1.0] — 2026-03-11
 
 - feat: PluresLM v2.0 - Remove SQLite completely, add SSE/HTTP transport (511de31)
