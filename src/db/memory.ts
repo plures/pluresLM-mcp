@@ -566,4 +566,258 @@ export class MemoryDB {
     const magnitude = Math.sqrt(normA * normB);
     return magnitude === 0 ? 0 : dotProduct / magnitude;
   }
+
+  /**
+   * Export all memories as a bundle
+   */
+  async exportBundle(): Promise<{
+    metadata: {
+      version: string;
+      exported_at: number;
+      memory_count: number;
+      bundle_id: string;
+    };
+    memories: MemoryEntry[];
+  }> {
+    const allItems = this.db.list() || [];
+    const memories = allItems.filter((item): item is MemoryEntry => this.isValidMemoryEntry(item));
+
+    return {
+      metadata: {
+        version: "2.2.0",
+        exported_at: Date.now(),
+        memory_count: memories.length,
+        bundle_id: randomUUID(),
+      },
+      memories,
+    };
+  }
+
+  /**
+   * Restore memories from a bundle
+   */
+  async restoreBundle(bundle: {
+    metadata: { memory_count: number };
+    memories: MemoryEntry[];
+  }): Promise<{
+    imported: number;
+    skipped: number;
+    errors: number;
+  }> {
+    let imported = 0;
+    let skipped = 0;
+    let errors = 0;
+
+    for (const memory of bundle.memories) {
+      try {
+        // Check if memory already exists
+        const existing = await this.get(memory.id);
+        if (existing) {
+          skipped++;
+          continue;
+        }
+
+        // Import the memory
+        if (memory.embedding && memory.embedding.length > 0) {
+          this.db.putWithEmbedding(memory.id, memory, memory.embedding);
+        } else {
+          this.db.put(memory.id, memory);
+        }
+        imported++;
+      } catch (err) {
+        console.error(`Failed to restore memory ${memory.id}:`, err);
+        errors++;
+      }
+    }
+
+    return { imported, skipped, errors };
+  }
+
+  /**
+   * Export memory pack (subset with filtering)
+   */
+  async exportPack(options: {
+    name: string;
+    category?: string;
+    tags?: string[];
+    dateRange?: { start: number; end: number };
+    limit?: number;
+  }): Promise<{
+    pack: {
+      name: string;
+      created_at: number;
+      filters: typeof options;
+      memories: MemoryEntry[];
+    };
+  }> {
+    const allItems = this.db.list() || [];
+    let memories = allItems.filter((item): item is MemoryEntry => this.isValidMemoryEntry(item));
+
+    // Apply filters
+    if (options.category) {
+      memories = memories.filter(m => m.category === options.category);
+    }
+
+    if (options.tags && options.tags.length > 0) {
+      memories = memories.filter(m => 
+        options.tags!.some(tag => m.tags.includes(tag))
+      );
+    }
+
+    if (options.dateRange) {
+      memories = memories.filter(m => 
+        m.created_at >= options.dateRange!.start && 
+        m.created_at <= options.dateRange!.end
+      );
+    }
+
+    if (options.limit) {
+      memories = memories.slice(0, options.limit);
+    }
+
+    const pack = {
+      name: options.name,
+      created_at: Date.now(),
+      filters: options,
+      memories,
+    };
+
+    // Store pack metadata for listing
+    const packId = `pack:${options.name}`;
+    this.db.put(packId, {
+      type: 'pack',
+      name: options.name,
+      created_at: pack.created_at,
+      memory_count: memories.length,
+      filters: options,
+    });
+
+    return { pack };
+  }
+
+  /**
+   * Import memory pack
+   */
+  async importPack(pack: {
+    name: string;
+    memories: MemoryEntry[];
+  }): Promise<{
+    imported: number;
+    skipped: number;
+    errors: number;
+  }> {
+    let imported = 0;
+    let skipped = 0;
+    let errors = 0;
+
+    for (const memory of pack.memories) {
+      try {
+        // Check if memory already exists
+        const existing = await this.get(memory.id);
+        if (existing) {
+          skipped++;
+          continue;
+        }
+
+        // Import the memory
+        if (memory.embedding && memory.embedding.length > 0) {
+          this.db.putWithEmbedding(memory.id, memory, memory.embedding);
+        } else {
+          this.db.put(memory.id, memory);
+        }
+        imported++;
+      } catch (err) {
+        console.error(`Failed to import memory ${memory.id}:`, err);
+        errors++;
+      }
+    }
+
+    return { imported, skipped, errors };
+  }
+
+  /**
+   * List available memory packs
+   */
+  async listPacks(): Promise<Array<{
+    name: string;
+    created_at: number;
+    memory_count: number;
+    filters: Record<string, unknown>;
+  }>> {
+    const allItems = this.db.list() || [];
+    const packs = allItems.filter(item => 
+      typeof item === 'object' && 
+      item !== null && 
+      'type' in item && 
+      item.type === 'pack'
+    );
+
+    return packs.map(pack => ({
+      name: (pack as any).name,
+      created_at: (pack as any).created_at,
+      memory_count: (pack as any).memory_count,
+      filters: (pack as any).filters || {},
+    }));
+  }
+
+  /**
+   * Uninstall memory pack (remove pack metadata)
+   */
+  async uninstallPack(name: string): Promise<boolean> {
+    const packId = `pack:${name}`;
+    try {
+      this.db.delete(packId);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Query DSL processor (basic implementation)
+   */
+  async queryDsl(query: string): Promise<MemoryEntry[]> {
+    // Basic DSL implementation - support filter(), sort(), limit()
+    try {
+      const allItems = this.db.list() || [];
+      let memories = allItems.filter((item): item is MemoryEntry => this.isValidMemoryEntry(item));
+
+      // Simple parser for basic DSL operations
+      const operations = query.split('|>').map(op => op.trim());
+      
+      for (const op of operations) {
+        if (op.startsWith('filter(')) {
+          const filterExpr = op.match(/filter\((.*)\)/)?.[1];
+          if (filterExpr) {
+            if (filterExpr.includes('category ==')) {
+              const category = filterExpr.match(/category == "(.*)"/)?.[1];
+              if (category) {
+                memories = memories.filter(m => m.category === category);
+              }
+            }
+            if (filterExpr.includes('tags.includes')) {
+              const tag = filterExpr.match(/tags\.includes\("(.*)"\)/)?.[1];
+              if (tag) {
+                memories = memories.filter(m => m.tags.includes(tag));
+              }
+            }
+          }
+        } else if (op.startsWith('sort(')) {
+          const sortExpr = op.match(/sort\((.*)\)/)?.[1];
+          if (sortExpr && sortExpr.includes('created_at')) {
+            const desc = sortExpr.includes('desc');
+            memories.sort((a, b) => desc ? b.created_at - a.created_at : a.created_at - b.created_at);
+          }
+        } else if (op.startsWith('limit(')) {
+          const limit = parseInt(op.match(/limit\((\d+)\)/)?.[1] || '10');
+          memories = memories.slice(0, limit);
+        }
+      }
+
+      return memories;
+    } catch (err) {
+      console.error('DSL query error:', err);
+      return [];
+    }
+  }
 }

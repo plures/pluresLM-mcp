@@ -280,6 +280,92 @@ export async function startServer(): Promise<void> {
           description: "MCP service health check.",
           inputSchema: { type: "object", properties: {} },
         },
+        {
+          name: "pluresLM_export_bundle",
+          description: "Export all memories as a bundle.",
+          inputSchema: { type: "object", properties: {} },
+        },
+        {
+          name: "pluresLM_restore_bundle",
+          description: "Restore memories from a bundle.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              bundle: { 
+                type: "object", 
+                description: "Bundle object with metadata and memories.",
+                properties: {
+                  metadata: { type: "object" },
+                  memories: { type: "array" },
+                },
+                required: ["metadata", "memories"],
+              },
+            },
+            required: ["bundle"],
+          },
+        },
+        {
+          name: "pluresLM_export_pack",
+          description: "Export a filtered subset of memories as a pack.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              name: { type: "string", description: "Pack name." },
+              category: { type: "string", description: "Filter by category." },
+              tags: { type: "array", items: { type: "string" }, description: "Filter by tags." },
+              dateStart: { type: "number", description: "Start timestamp." },
+              dateEnd: { type: "number", description: "End timestamp." },
+              limit: { type: "number", description: "Max memories to include." },
+            },
+            required: ["name"],
+          },
+        },
+        {
+          name: "pluresLM_import_pack",
+          description: "Import memories from a pack.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              pack: {
+                type: "object",
+                description: "Pack object with name and memories.",
+                properties: {
+                  name: { type: "string" },
+                  memories: { type: "array" },
+                },
+                required: ["name", "memories"],
+              },
+            },
+            required: ["pack"],
+          },
+        },
+        {
+          name: "pluresLM_list_packs",
+          description: "List available memory packs.",
+          inputSchema: { type: "object", properties: {} },
+        },
+        {
+          name: "pluresLM_uninstall_pack",
+          description: "Remove a memory pack.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              name: { type: "string", description: "Pack name to remove." },
+            },
+            required: ["name"],
+          },
+        },
+        {
+          name: "pluresLM_query_dsl",
+          description: "Advanced DSL query processor.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              query: { type: "string", description: "DSL query (e.g., 'filter(category == \"decision\") |> sort(by: created_at, dir: desc) |> limit(5)')." },
+            },
+            required: ["query"],
+          },
+        },
       ],
     };
   });
@@ -549,6 +635,78 @@ export async function startServer(): Promise<void> {
       if (name === "pluresLM_health") {
         const health = await db.health();
         return textResult(health);
+      }
+
+      // Export/Import/Pack tools
+      if (name === "pluresLM_export_bundle") {
+        const bundle = await db.exportBundle();
+        return textResult(bundle);
+      }
+
+      if (name === "pluresLM_restore_bundle") {
+        const bundle = args.bundle;
+        if (!bundle) throw new McpError(ErrorCode.InvalidParams, "bundle is required");
+
+        const result = await db.restoreBundle(bundle as any);
+        return textResult(result);
+      }
+
+      if (name === "pluresLM_export_pack") {
+        const name = String(args.name ?? "");
+        if (!name) throw new McpError(ErrorCode.InvalidParams, "name is required");
+
+        const options: any = { name };
+        if (args.category) options.category = String(args.category);
+        if (args.tags) options.tags = asStringArray(args.tags);
+        if (args.dateStart && args.dateEnd) {
+          options.dateRange = {
+            start: Number(args.dateStart),
+            end: Number(args.dateEnd),
+          };
+        }
+        if (args.limit) options.limit = Number(args.limit);
+
+        const result = await db.exportPack(options);
+        return textResult(result);
+      }
+
+      if (name === "pluresLM_import_pack") {
+        const pack = args.pack;
+        if (!pack) throw new McpError(ErrorCode.InvalidParams, "pack is required");
+
+        const result = await db.importPack(pack as any);
+        return textResult(result);
+      }
+
+      if (name === "pluresLM_list_packs") {
+        const packs = await db.listPacks();
+        return textResult({ packs });
+      }
+
+      if (name === "pluresLM_uninstall_pack") {
+        const name = String(args.name ?? "");
+        if (!name) throw new McpError(ErrorCode.InvalidParams, "name is required");
+
+        const success = await db.uninstallPack(name);
+        return textResult({ success, pack: name });
+      }
+
+      if (name === "pluresLM_query_dsl") {
+        const query = String(args.query ?? "").trim();
+        if (!query) throw new McpError(ErrorCode.InvalidParams, "query is required");
+
+        const results = await db.queryDsl(query);
+        return textResult({
+          query,
+          results: results.map(m => ({
+            id: m.id,
+            content: m.content,
+            tags: m.tags,
+            category: m.category,
+            source: m.source,
+            created_at: m.created_at,
+          })),
+        });
       }
 
       throw new McpError(ErrorCode.MethodNotFound, `Unknown tool: ${name}`);
