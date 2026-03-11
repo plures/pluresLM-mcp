@@ -1,3 +1,9 @@
+## [2.1.0] — 2026-03-11
+
+- feat: PluresLM v2.0 - Remove SQLite completely, add SSE/HTTP transport (511de31)
+- ci: add PR lane event relay to centralized merge FSM (d3ae447)
+- Rename superlocalmemory to pluresLM in README (5eaf29f)
+
 ## [0.2.1] — 2026-03-01
 
 - fix(ci): add id-token permission to release workflow (#4) (37641a9)
