@@ -382,8 +382,8 @@ export async function startServer(): Promise<void> {
         if (!content) throw new McpError(ErrorCode.InvalidParams, "content is required");
 
         const tags = asStringArray(args.tags) ?? [];
-        const category = args.category !== undefined ? String(args.category) : undefined;
-        const source = args.source !== undefined ? String(args.source) : "";
+        const category = args.category != null ? String(args.category) : undefined;
+        const source = args.source != null ? String(args.source) : "";
 
         const embedding = await embeddings.embed(content);
         const stored = await db.store(content, embedding, { tags, category, source });
@@ -425,8 +425,8 @@ export async function startServer(): Promise<void> {
       }
 
       if (name === "pluresLM_forget") {
-        const id = args.id !== undefined ? String(args.id) : undefined;
-        const query = args.query !== undefined ? String(args.query).trim() : undefined;
+        const id = args.id != null ? String(args.id) : undefined;
+        const query = args.query != null ? String(args.query).trim() : undefined;
         const threshold = args.threshold !== undefined ? Number(args.threshold) : 0.8;
 
         if (id) {
@@ -459,7 +459,7 @@ export async function startServer(): Promise<void> {
 
         const maxFiles = args.maxFiles !== undefined ? Number(args.maxFiles) : 500;
         const maxBytesPerFile = args.maxBytesPerFile !== undefined ? Number(args.maxBytesPerFile) : 200_000;
-        const category = args.category !== undefined ? String(args.category) : "project-context";
+        const category = args.category != null ? String(args.category) : "project-context";
         const extraTags = asStringArray(args.tags) ?? [];
 
         const root = path.resolve(directory);
@@ -511,10 +511,10 @@ export async function startServer(): Promise<void> {
       if (name === "pluresLM_list") {
         const limit = args.limit !== undefined ? Number(args.limit) : 10;
         const offset = args.offset !== undefined ? Number(args.offset) : 0;
-        const category = args.category !== undefined ? String(args.category) : undefined;
+        const category = args.category != null ? String(args.category) : undefined;
         const tags = asStringArray(args.tags);
-        const sortBy = args.sortBy !== undefined ? String(args.sortBy) as 'created_at' : 'created_at';
-        const sortOrder = args.sortOrder !== undefined ? String(args.sortOrder) as 'asc' | 'desc' : 'desc';
+        const sortBy = args.sortBy != null ? String(args.sortBy) as 'created_at' : 'created_at';
+        const sortOrder = args.sortOrder != null ? String(args.sortOrder) as 'asc' | 'desc' : 'desc';
 
         const memories = await db.list({ limit, offset, category, tags, sortBy, sortOrder });
         return textResult({
@@ -577,7 +577,7 @@ export async function startServer(): Promise<void> {
         const limit = args.limit !== undefined ? Number(args.limit) : 10;
         const caseSensitive = args.caseSensitive !== undefined ? Boolean(args.caseSensitive) : false;
         const wholeWords = args.wholeWords !== undefined ? Boolean(args.wholeWords) : false;
-        const category = args.category !== undefined ? String(args.category) : undefined;
+        const category = args.category != null ? String(args.category) : undefined;
 
         const results = await db.searchText(query, { limit, caseSensitive, wholeWords, category });
 
