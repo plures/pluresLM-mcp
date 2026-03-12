@@ -1,3 +1,7 @@
+## [2.6.1] — 2026-03-12
+
+- fix: unwrap PluresDB node wrappers and normalize vector/embedding field names (1729a31)
+
 ## [2.6.0] — 2026-03-11
 
 - feat: multi-client session routing for HTTP transport (94d77ff)
