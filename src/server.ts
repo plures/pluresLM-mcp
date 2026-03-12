@@ -96,7 +96,7 @@ export async function startServer(): Promise<void> {
 
   function createMcpServer() {
   const server = new Server(
-    { name: "pluresLM-mcp", version: "2.0.0" },
+    { name: "pluresLM-mcp", version: "2.5.1" },
     {
       capabilities: {
         tools: {},

@@ -124,7 +124,7 @@ export class MemoryDB {
       // Ensure the entry has the expected MemoryEntry structure
       if (this.isValidMemoryEntry(rawEntry)) {
         results.push({
-          entry: rawEntry,
+          entry: this.extractMemoryEntry(rawEntry),
           score: item.score
         });
       }
@@ -134,19 +134,46 @@ export class MemoryDB {
   }
 
   /**
-   * Type guard for MemoryEntry validation
+   * Unwrap PluresDB node — nodes are stored as { data, id, timestamp }.
+   * Returns the inner `data` if wrapped, otherwise the raw object.
+   */
+  private unwrapNode(node: unknown): unknown {
+    if (typeof node === 'object' && node !== null && 'data' in node && 'id' in node && 'timestamp' in node) {
+      return (node as { data: unknown }).data;
+    }
+    return node;
+  }
+
+  /**
+   * Type guard for MemoryEntry validation. Handles both raw entries
+   * and PluresDB-wrapped nodes { data, id, timestamp }.
    */
   private isValidMemoryEntry(data: unknown): data is MemoryEntry {
+    const entry = this.unwrapNode(data);
     return (
-      typeof data === 'object' &&
-      data !== null &&
-      'id' in data &&
-      'content' in data &&
-      'embedding' in data &&
-      'tags' in data &&
-      'source' in data &&
-      'created_at' in data
+      typeof entry === 'object' &&
+      entry !== null &&
+      'id' in entry &&
+      'content' in entry &&
+      ('embedding' in entry || 'vector' in entry) &&
+      'created_at' in entry
     );
+  }
+
+  /**
+   * Extract a MemoryEntry from a possibly-wrapped node.
+   * Call only after isValidMemoryEntry returns true.
+   */
+  private extractMemoryEntry(data: unknown): MemoryEntry {
+    const raw = this.unwrapNode(data) as Record<string, unknown>;
+    // Normalize: gateway plugin stores 'vector', pluresLM-mcp expects 'embedding'
+    if ('vector' in raw && !('embedding' in raw)) {
+      raw.embedding = raw.vector;
+    }
+    // Default missing fields
+    if (!('tags' in raw)) raw.tags = [];
+    if (!('source' in raw)) raw.source = '';
+    return raw as unknown as MemoryEntry;
   }
 
   /**
@@ -217,7 +244,7 @@ export class MemoryDB {
     const allItems = this.db.list() || [];
     
     const memories = allItems
-      .filter((item): item is MemoryEntry => this.isValidMemoryEntry(item))
+      .filter(item => this.isValidMemoryEntry(item)).map(item => this.extractMemoryEntry(item))
       .sort((a, b) => b.created_at - a.created_at)
       .slice(0, limit);
     
@@ -284,7 +311,7 @@ export class MemoryDB {
     if (!this.isValidMemoryEntry(data)) {
       return null;
     }
-    return data;
+    return this.extractMemoryEntry(data);
   }
 
   /**
@@ -328,7 +355,7 @@ export class MemoryDB {
 
     // Get all items and filter to valid memories
     const allItems = this.db.list() || [];
-    let memories = allItems.filter((item): item is MemoryEntry => this.isValidMemoryEntry(item));
+    let memories = allItems.filter(item => this.isValidMemoryEntry(item)).map(item => this.extractMemoryEntry(item));
 
     // Apply filters
     if (category) {
@@ -371,7 +398,7 @@ export class MemoryDB {
     }
 
     const allItems = this.db.list() || [];
-    const memories = allItems.filter((item): item is MemoryEntry => this.isValidMemoryEntry(item));
+    const memories = allItems.filter(item => this.isValidMemoryEntry(item)).map(item => this.extractMemoryEntry(item));
 
     const matches = memories.filter(memory => {
       // Apply category filter
@@ -402,7 +429,7 @@ export class MemoryDB {
     const cutoffTime = Date.now() - (daysThreshold * 24 * 60 * 60 * 1000);
 
     const allItems = this.db.list() || [];
-    const memories = allItems.filter((item): item is MemoryEntry => this.isValidMemoryEntry(item));
+    const memories = allItems.filter(item => this.isValidMemoryEntry(item)).map(item => this.extractMemoryEntry(item));
 
     const staleMemories = memories
       .filter(memory => memory.created_at < cutoffTime)
@@ -421,7 +448,7 @@ export class MemoryDB {
     suggestions: Array<{original: MemoryEntry, duplicate: MemoryEntry, similarity: number}>;
   }> {
     const allItems = this.db.list() || [];
-    const memories = allItems.filter((item): item is MemoryEntry => this.isValidMemoryEntry(item));
+    const memories = allItems.filter(item => this.isValidMemoryEntry(item)).map(item => this.extractMemoryEntry(item));
 
     const suggestions: Array<{original: MemoryEntry, duplicate: MemoryEntry, similarity: number}> = [];
     let duplicatesRemoved = 0;
@@ -472,7 +499,7 @@ export class MemoryDB {
     
     // Count by category
     const allItems = this.db.list() || [];
-    const memories = allItems.filter((item): item is MemoryEntry => this.isValidMemoryEntry(item));
+    const memories = allItems.filter(item => this.isValidMemoryEntry(item)).map(item => this.extractMemoryEntry(item));
     
     const categories: Record<string, number> = {};
     memories.forEach(memory => {
@@ -509,7 +536,7 @@ export class MemoryDB {
 
     // Get memories from that day
     const allItems = this.db.list() || [];
-    const allMemories = allItems.filter((item): item is MemoryEntry => this.isValidMemoryEntry(item));
+    const allMemories = allItems.filter(item => this.isValidMemoryEntry(item)).map(item => this.extractMemoryEntry(item));
     
     const dayMemories = allMemories.filter(memory => 
       memory.created_at >= startTime && memory.created_at <= endTime
@@ -580,7 +607,7 @@ export class MemoryDB {
     memories: MemoryEntry[];
   }> {
     const allItems = this.db.list() || [];
-    const memories = allItems.filter((item): item is MemoryEntry => this.isValidMemoryEntry(item));
+    const memories = allItems.filter(item => this.isValidMemoryEntry(item)).map(item => this.extractMemoryEntry(item));
 
     return {
       metadata: {
@@ -651,7 +678,7 @@ export class MemoryDB {
     };
   }> {
     const allItems = this.db.list() || [];
-    let memories = allItems.filter((item): item is MemoryEntry => this.isValidMemoryEntry(item));
+    let memories = allItems.filter(item => this.isValidMemoryEntry(item)).map(item => this.extractMemoryEntry(item));
 
     // Apply filters
     if (options.category) {
@@ -780,7 +807,7 @@ export class MemoryDB {
     // Basic DSL implementation - support filter(), sort(), limit()
     try {
       const allItems = this.db.list() || [];
-      let memories = allItems.filter((item): item is MemoryEntry => this.isValidMemoryEntry(item));
+      let memories = allItems.filter(item => this.isValidMemoryEntry(item)).map(item => this.extractMemoryEntry(item));
 
       // Simple parser for basic DSL operations
       const operations = query.split('|>').map(op => op.trim());
