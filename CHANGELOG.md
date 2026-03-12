@@ -1,3 +1,7 @@
+## [2.6.2] — 2026-03-12
+
+- fix: handle null args in tool handlers — category:null no longer filters by literal 'null' (42be0c4)
+
 ## [2.6.1] — 2026-03-12
 
 - fix: unwrap PluresDB node wrappers and normalize vector/embedding field names (1729a31)
