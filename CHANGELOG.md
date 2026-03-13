@@ -1,3 +1,7 @@
+## [2.8.0] — 2026-03-13
+
+- feat: add stored procedure engine (c6ddece)
+
 ## [2.7.0] — 2026-03-13
 
 - feat: add API key authentication for MCP endpoint (8e6bcb3)
