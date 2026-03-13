@@ -1,3 +1,7 @@
+## [2.7.0] — 2026-03-13
+
+- feat: add API key authentication for MCP endpoint (8e6bcb3)
+
 ## [2.6.2] — 2026-03-12
 
 - fix: handle null args in tool handlers — category:null no longer filters by literal 'null' (42be0c4)
