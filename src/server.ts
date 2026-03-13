@@ -17,6 +17,7 @@ import { MemoryDB } from "./db/memory.js";
 import { createEmbeddings } from "./embeddings/index.js";
 
 import { loadConfig } from "./config.js";
+import { ProcedureEngine, type ProcedureStep, type ProcedureTrigger } from "./procedures.js";
 
 type JsonObject = Record<string, unknown>;
 
@@ -93,6 +94,18 @@ export async function startServer(): Promise<void> {
   // Connect to PluresDB (replaces SQLite)
   const db = new MemoryDB({ topic: config.pluresDbTopic, secret: config.pluresDbSecret, dbPath: config.pluresDbPath, dimension: embeddings.dimension });
   await db.connect();
+
+  // Initialize procedure engine
+  const procedures = new ProcedureEngine({
+    db: db as any,
+    embed: async (text: string) => embeddings.embed(text),
+    onCue: async (name, payload) => {
+      // Fire on_cue procedures
+      await procedures.fireEvent("on_cue", { cue: name, ...payload });
+    },
+    debug: true,
+  });
+  await procedures.loadFromDb();
 
   function createMcpServer() {
   const server = new Server(
@@ -368,6 +381,85 @@ export async function startServer(): Promise<void> {
             required: ["query"],
           },
         },
+
+        // ---- Procedures ----
+        {
+          name: "pluresLM_create_procedure",
+          description: "Create a stored procedure — a named, reusable pipeline of memory operations that runs on triggers or on demand. Steps: search, search_text, filter, sort, limit, merge (RRF), store, update, delete, transform (structured/fused), cue, parallel, conditional, assign, emit. Triggers: manual, after_store, before_search, on_cue, cron (e.g. '1h', '6h', '1d'). Variables: $input (trigger event), $pipeline (step output chain). Use 'as' on a step to save its result to a named variable for later use.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              name: { type: "string", description: "Unique procedure name" },
+              description: { type: "string", description: "What this procedure does" },
+              trigger: {
+                type: "object",
+                description: "When to run: { kind: 'manual'|'after_store'|'before_search'|'on_cue'|'cron', cron?: '1h', filter?: { category: 'x' }, cue?: 'name' }",
+                properties: {
+                  kind: { type: "string" },
+                  cron: { type: "string" },
+                  filter: { type: "object" },
+                  cue: { type: "string" },
+                },
+                required: ["kind"],
+              },
+              steps: {
+                type: "array",
+                description: "Ordered steps to execute. Each: { kind, params, as? }",
+                items: {
+                  type: "object",
+                  properties: {
+                    kind: { type: "string" },
+                    params: { type: "object" },
+                    as: { type: "string" },
+                  },
+                  required: ["kind", "params"],
+                },
+              },
+            },
+            required: ["name", "trigger", "steps"],
+          },
+        },
+        {
+          name: "pluresLM_run_procedure",
+          description: "Run a stored procedure by name, optionally passing input context.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              name: { type: "string", description: "Procedure name" },
+              context: { type: "object", description: "Input context available as $input in steps" },
+            },
+            required: ["name"],
+          },
+        },
+        {
+          name: "pluresLM_list_procedures",
+          description: "List all stored procedures with their triggers, stats, and enabled status.",
+          inputSchema: { type: "object", properties: {} },
+        },
+        {
+          name: "pluresLM_update_procedure",
+          description: "Update a stored procedure's steps, trigger, description, or enabled status.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              name: { type: "string", description: "Procedure name to update" },
+              description: { type: "string" },
+              trigger: { type: "object" },
+              steps: { type: "array", items: { type: "object" } },
+              enabled: { type: "boolean" },
+            },
+            required: ["name"],
+          },
+        },
+        {
+          name: "pluresLM_delete_procedure",
+          description: "Delete a stored procedure by name.",
+          inputSchema: {
+            type: "object",
+            properties: { name: { type: "string" } },
+            required: ["name"],
+          },
+        },
       ],
     };
   });
@@ -388,6 +480,16 @@ export async function startServer(): Promise<void> {
         const embedding = await embeddings.embed(content);
         const stored = await db.store(content, embedding, { tags, category, source });
         await db.incrementCaptureCount();
+
+        // Fire after_store procedures (async, don't block the response)
+        procedures.fireEvent("after_store", {
+          id: stored.entry.id,
+          content,
+          tags,
+          category,
+          source,
+          isDuplicate: stored.isDuplicate,
+        }).catch(err => console.error("[procedures] after_store error:", err));
 
         return textResult({
           id: stored.entry.id,
@@ -709,6 +811,56 @@ export async function startServer(): Promise<void> {
             created_at: m.created_at,
           })),
         });
+      }
+
+      // ---- Procedure tools ----
+
+      if (name === "pluresLM_create_procedure") {
+        const procName = String(args.name ?? "");
+        const trigger = args.trigger as ProcedureTrigger;
+        const steps = args.steps as ProcedureStep[];
+        const description = args.description as string | undefined;
+        const proc = await procedures.create({ name: procName, description, trigger, steps, created_by: "agent" });
+        return textResult({ created: proc.name, id: proc.id, trigger: proc.trigger.kind, steps: proc.steps.length });
+      }
+
+      if (name === "pluresLM_run_procedure") {
+        const procName = String(args.name ?? "");
+        const context = (args.context ?? {}) as Record<string, unknown>;
+        const result = await procedures.run(procName, context);
+        return textResult(result);
+      }
+
+      if (name === "pluresLM_list_procedures") {
+        const procs = procedures.list();
+        return textResult({
+          count: procs.length,
+          procedures: procs.map(p => ({
+            name: p.name,
+            description: p.description,
+            trigger: p.trigger,
+            enabled: p.enabled,
+            version: p.version,
+            stats: p.stats,
+          })),
+        });
+      }
+
+      if (name === "pluresLM_update_procedure") {
+        const procName = String(args.name ?? "");
+        const patch: Record<string, unknown> = {};
+        if (args.description !== undefined) patch.description = args.description;
+        if (args.trigger !== undefined) patch.trigger = args.trigger;
+        if (args.steps !== undefined) patch.steps = args.steps;
+        if (args.enabled !== undefined) patch.enabled = args.enabled;
+        const updated = await procedures.update(procName, patch as any);
+        return textResult({ updated: updated.name, version: updated.version });
+      }
+
+      if (name === "pluresLM_delete_procedure") {
+        const procName = String(args.name ?? "");
+        await procedures.remove(procName);
+        return textResult({ deleted: procName });
       }
 
       throw new McpError(ErrorCode.MethodNotFound, `Unknown tool: ${name}`);
