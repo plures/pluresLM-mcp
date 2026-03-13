@@ -830,8 +830,10 @@ export async function startServer(): Promise<void> {
       }
     }
 
+    const apiKey = process.env.MCP_API_KEY;
+
     const httpServer = createServer(async (req, res) => {
-      // Health endpoint
+      // Health endpoint (no auth required)
       if (req.url === '/health') {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ 
@@ -847,6 +849,15 @@ export async function startServer(): Promise<void> {
 
       // MCP endpoint
       if (req.url === '/mcp') {
+        // API key check (if MCP_API_KEY is set)
+        if (apiKey) {
+          const provided = req.headers['x-api-key'] as string | undefined;
+          if (provided !== apiKey) {
+            res.writeHead(401, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Unauthorized — invalid or missing x-api-key' }));
+            return;
+          }
+        }
         try {
           const sessionId = req.headers['mcp-session-id'] as string | undefined;
           if (sessionId && sessions.has(sessionId)) {
