@@ -1,3 +1,7 @@
+## [2.9.0] — 2026-03-21
+
+- feat: Adopt @plures/praxis for declarative logic management (#9) (fc6af24)
+
 ## [2.8.0] — 2026-03-13
 
 - feat: add stored procedure engine (c6ddece)
