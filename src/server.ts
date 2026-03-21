@@ -487,7 +487,7 @@ export async function startServer(): Promise<void> {
       },
     }));
 
-    const praxisResult = praxisEngine.step([{ tag: 'TOOL_REQUEST', payload: { toolName: name } }]);
+    const praxisResult = praxisEngine.step([{ tag: 'TOOL_REQUEST', payload: { toolName: name, args, timestamp: Date.now() } }]);
 
     // Surface constraint violations as MCP errors
     for (const diag of praxisResult.diagnostics) {

@@ -102,8 +102,8 @@ const rateLimitRule = defineRule<PluresLmContext>({
     ruleId: 'session-management.rate-limit',
     behavior: 'Emits session.rate-limited when requests in window exceed max, or session.rate-ok otherwise',
     examples: [
-      { given: '50 requests in last minute, max=60', when: 'TOOL_REQUEST', then: 'Emits session.rate-ok' },
-      { given: '65 requests in last minute, max=60', when: 'TOOL_REQUEST', then: 'Emits session.rate-limited' },
+      { given: '60 requests in last minute, max=60', when: 'TOOL_REQUEST', then: 'Emits session.rate-ok' },
+      { given: '61 requests in last minute, max=60', when: 'TOOL_REQUEST', then: 'Emits session.rate-limited' },
     ],
     invariants: ['Rate limits reset each window', 'Default max is 60 requests per minute'],
   }),
@@ -117,7 +117,7 @@ const rateLimitRule = defineRule<PluresLmContext>({
       return RuleResult.emit([fact('session.rate-ok', { requestsInWindow: 1, windowReset: true })]);
     }
 
-    if (requestsInWindow >= maxRequestsPerMinute) {
+    if (requestsInWindow > maxRequestsPerMinute) {
       return RuleResult.emit([
         fact('session.rate-limited', {
           requestsInWindow,
@@ -162,8 +162,8 @@ const rateLimitConstraint = defineConstraint<PluresLmContext>({
     ruleId: 'session-management.within-rate-limit',
     behavior: 'Passes when requests in window are below max; fails when exceeded',
     examples: [
-      { given: '50 requests, max=60', when: 'Constraint evaluated', then: 'Passes' },
-      { given: '60 requests, max=60', when: 'Constraint evaluated', then: 'Fails' },
+      { given: '60 requests, max=60', when: 'Constraint evaluated', then: 'Passes (at limit, not over)' },
+      { given: '61 requests, max=60', when: 'Constraint evaluated', then: 'Fails' },
     ],
     invariants: ['Uses the same window as the rate-limit rule'],
   }),
@@ -173,7 +173,7 @@ const rateLimitConstraint = defineConstraint<PluresLmContext>({
     const elapsed = Date.now() - windowStart;
     if (elapsed > RATE_LIMIT_WINDOW_MS) return true; // Window reset
 
-    if (requestsInWindow >= maxRequestsPerMinute) {
+    if (requestsInWindow > maxRequestsPerMinute) {
       return `Rate limit exceeded: ${requestsInWindow}/${maxRequestsPerMinute} requests per minute`;
     }
 

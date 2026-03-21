@@ -1,5 +1,5 @@
 /**
- * Praxis registry & engine initialisation for PluresLM MCP.
+ * Praxis registry & engine initialization for PluresLM MCP.
  *
  * Registers all four domain modules (tool-authorization,
  * request-validation, operation-routing, session-management)
