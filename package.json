@@ -39,6 +39,7 @@
     "@huggingface/transformers": "^3.8.1",
     "@modelcontextprotocol/sdk": "^1.26.0",
     "@plures/pluresdb": "file:../pluresdb",
+    "@plures/praxis": "^1.4.0",
     "zod": "^3.25.76"
   },
   "optionalDependencies": {

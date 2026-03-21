@@ -18,6 +18,7 @@ import { createEmbeddings } from "./embeddings/index.js";
 
 import { loadConfig } from "./config.js";
 import { ProcedureEngine, type ProcedureStep, type ProcedureTrigger } from "./procedures.js";
+import { createPluresLmEngine } from "./praxis/index.js";
 
 type JsonObject = Record<string, unknown>;
 
@@ -106,6 +107,13 @@ export async function startServer(): Promise<void> {
     debug: true,
   });
   await procedures.loadFromDb();
+
+  // Praxis logic engine — declarative rules for authorization, validation, routing
+  const praxisEngine = createPluresLmEngine({
+    transport: config.transport,
+    hasApiKey: !!process.env.MCP_API_KEY,
+    debug: config.debug,
+  });
 
   function createMcpServer() {
   const server = new Server(
@@ -467,6 +475,26 @@ export async function startServer(): Promise<void> {
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const name = request.params.name;
     const args = (request.params.arguments ?? {}) as JsonObject;
+
+    // --- Praxis: update context and step the logic engine ---
+    praxisEngine.updateContext((ctx) => ({
+      ...ctx,
+      request: { toolName: name, args, timestamp: Date.now() },
+      session: { ...ctx.session, lastActiveAt: Date.now(), requestCount: ctx.session.requestCount + 1 },
+      rateLimit: {
+        ...ctx.rateLimit,
+        requestsInWindow: ctx.rateLimit.requestsInWindow + 1,
+      },
+    }));
+
+    const praxisResult = praxisEngine.step([{ tag: 'TOOL_REQUEST', payload: { toolName: name } }]);
+
+    // Surface constraint violations as MCP errors
+    for (const diag of praxisResult.diagnostics) {
+      if (diag.kind === 'constraint-violation') {
+        throw new McpError(ErrorCode.InvalidParams, diag.message);
+      }
+    }
 
     try {
       if (name === "pluresLM_store") {
