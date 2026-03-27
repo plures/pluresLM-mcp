@@ -13,7 +13,7 @@ import {
   ReadResourceRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 
-import { MemoryDB } from "./db/memory.js";
+import { MemoryDB, type MemoryEntry } from "./db/memory.js";
 import { createEmbeddings } from "./embeddings/index.js";
 
 import { loadConfig } from "./config.js";
@@ -21,6 +21,9 @@ import { ProcedureEngine, type ProcedureStep, type ProcedureTrigger } from "./pr
 import { createPluresLmEngine } from "./praxis/index.js";
 
 type JsonObject = Record<string, unknown>;
+
+type MemoryBundle = { metadata: { memory_count: number }; memories: MemoryEntry[] };
+type MemoryPack = { name: string; memories: MemoryEntry[] };
 
 function textResult(toolResult: unknown) {
   return {
@@ -777,9 +780,9 @@ export async function startServer(): Promise<void> {
 
       if (name === "pluresLM_restore_bundle") {
         const bundle = args.bundle;
-        if (!bundle) throw new McpError(ErrorCode.InvalidParams, "bundle is required");
+        if (!bundle || typeof bundle !== "object") throw new McpError(ErrorCode.InvalidParams, "bundle is required");
 
-        const result = await db.restoreBundle(bundle as JsonObject);
+        const result = await db.restoreBundle(bundle as MemoryBundle);
         return textResult(result);
       }
 
@@ -787,7 +790,7 @@ export async function startServer(): Promise<void> {
         const name = String(args.name ?? "");
         if (!name) throw new McpError(ErrorCode.InvalidParams, "name is required");
 
-        const options: Record<string, unknown> = { name };
+        const options: { name: string; category?: string; tags?: string[]; dateRange?: { start: number; end: number }; limit?: number } = { name };
         if (args.category) options.category = String(args.category);
         if (args.tags) options.tags = asStringArray(args.tags);
         if (args.dateStart && args.dateEnd) {
@@ -804,9 +807,9 @@ export async function startServer(): Promise<void> {
 
       if (name === "pluresLM_import_pack") {
         const pack = args.pack;
-        if (!pack) throw new McpError(ErrorCode.InvalidParams, "pack is required");
+        if (!pack || typeof pack !== "object") throw new McpError(ErrorCode.InvalidParams, "pack is required");
 
-        const result = await db.importPack(pack as JsonObject);
+        const result = await db.importPack(pack as MemoryPack);
         return textResult(result);
       }
 

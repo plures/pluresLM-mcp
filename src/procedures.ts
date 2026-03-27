@@ -94,8 +94,8 @@ export interface ProcedureDbInterface {
   vectorSearch(query: number[], limit: number, minScore?: number): Promise<Array<{ entry: { id: string; content: string; tags: string[]; category?: string; source: string; created_at: number }; score: number }>>;
   searchText(query: string, opts?: { limit?: number; category?: string }): Promise<Array<{ id: string; content: string; tags: string[]; category?: string; source: string; created_at: number }>>;
   store(content: string, embedding: number[], opts?: Record<string, unknown>): Promise<{ entry: { id: string } }>;
-  update(id: string, fields: Record<string, unknown>): Promise<void>;
-  delete(id: string): Promise<void>;
+  update(id: string, fields: Record<string, unknown>): Promise<void | boolean>;
+  delete(id: string): Promise<void | boolean>;
 }
 
 export interface ProcedureResult {
@@ -525,16 +525,23 @@ export class ProcedureEngine {
         const value = p.value;
         const source = ctx.vars[String(p.from ?? "$pipeline")];
         const sourceRecord = this._asRecord(source);
-        const testValue = Array.isArray(source) ? source.length : sourceRecord[field] ?? source;
+        const testValueRaw = Array.isArray(source) ? source.length : sourceRecord[field] ?? source;
+        const testValue = testValueRaw as unknown;
 
         let condition = false;
         switch (op) {
           case "==": condition = testValue === value; break;
           case "!=": condition = testValue !== value; break;
-          case ">": condition = testValue > (value as number); break;
-          case "<": condition = testValue < (value as number); break;
-          case "empty": condition = !testValue || (Array.isArray(testValue) && testValue.length === 0); break;
-          case "not_empty": condition = !!testValue && (!Array.isArray(testValue) || testValue.length > 0); break;
+          case ">": condition = typeof testValueRaw === "number" && typeof value === "number" ? testValueRaw > value : false; break;
+          case "<": condition = typeof testValueRaw === "number" && typeof value === "number" ? testValueRaw < value : false; break;
+          case "empty": condition = Array.isArray(testValueRaw)
+            ? testValueRaw.length === 0
+            : testValueRaw === undefined || testValueRaw === null || testValueRaw === "";
+            break;
+          case "not_empty": condition = Array.isArray(testValueRaw)
+            ? testValueRaw.length > 0
+            : !(testValueRaw === undefined || testValueRaw === null || testValueRaw === "");
+            break;
         }
 
         if (condition && p.then) {
