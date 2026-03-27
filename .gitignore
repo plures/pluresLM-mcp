@@ -6,3 +6,6 @@ node_modules
 test-*.js
 test-db
 IMPLEMENTATION_SUMMARY.md
+node_modules/
+dist/
+coverage/
