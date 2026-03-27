@@ -113,8 +113,6 @@ export interface ProcedureResult {
 
 const PROCEDURE_CATEGORY = "system:procedure";
 const MAX_STEPS = 50;
-const MAX_PIPELINE_SIZE = 1000;
-const STEP_TIMEOUT_MS = 10_000;
 
 // ============================================================================
 // Procedure Engine
@@ -382,15 +380,16 @@ export class ProcedureEngine {
         const field = String(p.field ?? "");
         const op = String(p.op ?? "==");
         const value = p.value;
-        return pipeline.filter((item: any) => {
-          const v = item[field];
+        return pipeline.filter((item) => {
+          const record = this._asRecord(item);
+          const v = record[field];
           switch (op) {
             case "==": return v === value;
             case "!=": return v !== value;
-            case ">": return v > (value as number);
-            case "<": return v < (value as number);
-            case ">=": return v >= (value as number);
-            case "<=": return v <= (value as number);
+            case ">": return typeof v === "number" && typeof value === "number" ? v > value : false;
+            case "<": return typeof v === "number" && typeof value === "number" ? v < value : false;
+            case ">=": return typeof v === "number" && typeof value === "number" ? v >= value : false;
+            case "<=": return typeof v === "number" && typeof value === "number" ? v <= value : false;
             case "contains": return typeof v === "string" && v.includes(String(value));
             case "in": return Array.isArray(value) && value.includes(v);
             case "has_tag": return Array.isArray(v) && v.includes(String(value));
@@ -403,7 +402,13 @@ export class ProcedureEngine {
         const pipeline = [...this._ensureArray(ctx.vars[String(p.from ?? "$pipeline")])];
         const field = String(p.field ?? "created_at");
         const desc = p.desc !== false;
-        return pipeline.sort((a: any, b: any) => desc ? (b[field] ?? 0) - (a[field] ?? 0) : (a[field] ?? 0) - (b[field] ?? 0));
+        return pipeline.sort((a, b) => {
+          const aValue = this._asRecord(a)[field];
+          const bValue = this._asRecord(b)[field];
+          const aNum = typeof aValue === "number" ? aValue : 0;
+          const bNum = typeof bValue === "number" ? bValue : 0;
+          return desc ? bNum - aNum : aNum - bNum;
+        });
       }
 
       case "limit": {
@@ -421,8 +426,9 @@ export class ProcedureEngine {
           const scores = new Map<string, number>();
           const items = new Map<string, unknown>();
           for (const source of sources) {
-            source.forEach((item: any, rank: number) => {
-              const id = item.id ?? JSON.stringify(item);
+            source.forEach((item, rank: number) => {
+              const record = this._asRecord(item);
+              const id = typeof record.id === "string" ? record.id : JSON.stringify(item);
               scores.set(id, (scores.get(id) ?? 0) + 1 / (k + rank + 1));
               items.set(id, item);
             });
@@ -437,7 +443,8 @@ export class ProcedureEngine {
         const merged: unknown[] = [];
         for (const source of sources) {
           for (const item of source) {
-            const id = (item as any).id ?? JSON.stringify(item);
+            const record = this._asRecord(item);
+            const id = typeof record.id === "string" ? record.id : JSON.stringify(item);
             if (!seen.has(id)) {
               seen.add(id);
               merged.push(item);
@@ -465,14 +472,15 @@ export class ProcedureEngine {
 
         if (format === "structured" || format === "jsonl") {
           // Compress to dense structured assertions
-          return pipeline.map((item: any) => {
+          return pipeline.map((item) => {
+            const record = this._asRecord(item);
             const out: Record<string, unknown> = {};
-            if (item.id) out.id = item.id;
-            if (item.content) out.c = item.content.slice(0, 200);
-            if (item.category) out.cat = item.category;
-            if (item.tags?.length) out.t = item.tags;
-            if (item.score) out.s = Math.round(item.score * 100) / 100;
-            if (item.created_at) out.ts = item.created_at;
+            if (record.id) out.id = record.id;
+            if (typeof record.content === "string") out.c = record.content.slice(0, 200);
+            if (record.category) out.cat = record.category;
+            if (Array.isArray(record.tags) && record.tags.length) out.t = record.tags;
+            if (typeof record.score === "number") out.s = Math.round(record.score * 100) / 100;
+            if (typeof record.created_at === "number") out.ts = record.created_at;
             return out;
           });
         }
@@ -481,9 +489,11 @@ export class ProcedureEngine {
           // Fuse into a single context block — group by category
           const groups = new Map<string, string[]>();
           for (const item of pipeline) {
-            const cat = (item as any).category ?? "general";
+            const record = this._asRecord(item);
+            const cat = typeof record.category === "string" ? record.category : "general";
             if (!groups.has(cat)) groups.set(cat, []);
-            groups.get(cat)!.push((item as any).content?.slice(0, 300) ?? "");
+            const content = typeof record.content === "string" ? record.content.slice(0, 300) : "";
+            groups.get(cat)!.push(content);
           }
           const sections: string[] = [];
           for (const [cat, contents] of groups) {
@@ -514,7 +524,8 @@ export class ProcedureEngine {
         const op = String(p.op ?? "==");
         const value = p.value;
         const source = ctx.vars[String(p.from ?? "$pipeline")];
-        const testValue = Array.isArray(source) ? source.length : (source as any)?.[field] ?? source;
+        const sourceRecord = this._asRecord(source);
+        const testValue = Array.isArray(source) ? source.length : sourceRecord[field] ?? source;
 
         let condition = false;
         switch (op) {
@@ -555,7 +566,8 @@ export class ProcedureEngine {
         const pipeline = this._ensureArray(ctx.vars[String(p.from ?? "$pipeline")]);
         let deleted = 0;
         for (const item of pipeline) {
-          const id = (item as any).id;
+          const record = this._asRecord(item);
+          const id = typeof record.id === "string" ? record.id : undefined;
           if (id) {
             await ctx.db.delete(id);
             deleted++;
@@ -569,7 +581,8 @@ export class ProcedureEngine {
         const fields = (p.fields ?? {}) as Record<string, unknown>;
         let updated = 0;
         for (const item of pipeline) {
-          const id = (item as any).id;
+          const record = this._asRecord(item);
+          const id = typeof record.id === "string" ? record.id : undefined;
           if (id) {
             await ctx.db.update(id, fields);
             updated++;
@@ -600,10 +613,15 @@ export class ProcedureEngine {
     return resolved;
   }
 
-  private _ensureArray(value: unknown): any[] {
+  private _ensureArray(value: unknown): unknown[] {
     if (Array.isArray(value)) return value;
     if (value == null) return [];
     return [value];
+  }
+
+  private _asRecord(value: unknown): Record<string, unknown> {
+    if (value && typeof value === "object") return value as Record<string, unknown>;
+    return {};
   }
 
   private _matchesFilter(event: Record<string, unknown>, filter: Record<string, unknown>): boolean {

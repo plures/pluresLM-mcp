@@ -1,5 +1,19 @@
 import type { EmbeddingProvider } from "./transformers.js";
 
+type OpenAIEmbeddingsResponse = {
+  data: Array<{ embedding: number[] }>;
+};
+
+type OpenAIClient = {
+  embeddings: {
+    create: (args: { model: string; input: string }) => Promise<OpenAIEmbeddingsResponse>;
+  };
+};
+
+type OpenAIConstructor = {
+  new (options: { apiKey: string }): OpenAIClient;
+};
+
 /**
  * OpenAI embedding provider (optional, requires openai package and API key).
  * Uses text-embedding-3-small with 1536 dimensions.
@@ -10,7 +24,7 @@ export class OpenAIEmbeddings implements EmbeddingProvider {
   private apiKey: string;
   private model: string;
   private debug: boolean;
-  private clientPromise: Promise<any> | null = null;
+  private clientPromise: Promise<OpenAIClient> | null = null;
 
   constructor(apiKey: string, model = "text-embedding-3-small", debug = false) {
     this.apiKey = apiKey;
@@ -24,14 +38,14 @@ export class OpenAIEmbeddings implements EmbeddingProvider {
     }
   }
 
-  private async getClient(): Promise<any> {
+  private async getClient(): Promise<OpenAIClient> {
     if (!this.clientPromise) {
       this.clientPromise = (async () => {
         try {
           // Dynamic import to make openai optional in an ES module context
           const openaiModule = await import("openai");
-          const OpenAI = (openaiModule as any).default || openaiModule;
-          const client = new (OpenAI as any)({ apiKey: this.apiKey });
+          const OpenAI = ((openaiModule as { default?: unknown }).default ?? openaiModule) as OpenAIConstructor;
+          const client = new OpenAI({ apiKey: this.apiKey });
 
           if (this.debug) {
             console.error(
@@ -42,7 +56,8 @@ export class OpenAIEmbeddings implements EmbeddingProvider {
           return client;
         } catch (err) {
           throw new Error(
-            "OpenAI package not available. Install with: npm install openai"
+            "OpenAI package not available. Install with: npm install openai",
+            { cause: err }
           );
         }
       })();
@@ -59,7 +74,7 @@ export class OpenAIEmbeddings implements EmbeddingProvider {
         input: text,
       });
 
-      const embedding = response.data[0].embedding;
+      const embedding = response.data[0]?.embedding ?? [];
 
       // Validate dimension
       if (embedding.length !== this.dimension) {
@@ -76,7 +91,8 @@ export class OpenAIEmbeddings implements EmbeddingProvider {
 
       return embedding;
     } catch (err) {
-      throw new Error(`OpenAI embedding failed: ${(err as Error).message}`);
+      const message = err instanceof Error ? err.message : String(err);
+      throw new Error(`OpenAI embedding failed: ${message}`, { cause: err });
     }
   }
 }

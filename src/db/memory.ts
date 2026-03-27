@@ -231,8 +231,8 @@ export class MemoryDB {
       data !== null &&
       'key' in data &&
       'value' in data &&
-      typeof (data as any).key === 'string' &&
-      typeof (data as any).value === 'string'
+      typeof (data as Record<string, unknown>).key === 'string' &&
+      typeof (data as Record<string, unknown>).value === 'string'
     );
   }
 
@@ -299,7 +299,7 @@ export class MemoryDB {
       typeof data === 'object' &&
       data !== null &&
       'count' in data &&
-      typeof (data as any).count === 'number'
+      typeof (data as Record<string, unknown>).count === 'number'
     );
   }
 
@@ -779,12 +779,17 @@ export class MemoryDB {
       item.type === 'pack'
     );
 
-    return packs.map(pack => ({
-      name: (pack as any).name,
-      created_at: (pack as any).created_at,
-      memory_count: (pack as any).memory_count,
-      filters: (pack as any).filters || {},
-    }));
+    return packs.map(pack => {
+      const record = pack as Record<string, unknown>;
+      return {
+        name: typeof record.name === "string" ? record.name : "",
+        created_at: typeof record.created_at === "number" ? record.created_at : 0,
+        memory_count: typeof record.memory_count === "number" ? record.memory_count : 0,
+        filters: typeof record.filters === "object" && record.filters !== null
+          ? (record.filters as Record<string, unknown>)
+          : {},
+      };
+    });
   }
 
   /**

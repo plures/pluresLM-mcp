@@ -98,7 +98,7 @@ export async function startServer(): Promise<void> {
 
   // Initialize procedure engine
   const procedures = new ProcedureEngine({
-    db: db as any,
+    db,
     embed: async (text: string) => embeddings.embed(text),
     onCue: async (name, payload) => {
       // Fire on_cue procedures
@@ -687,7 +687,7 @@ export async function startServer(): Promise<void> {
         const id = String(args.id ?? "");
         if (!id) throw new McpError(ErrorCode.InvalidParams, "id is required");
 
-        const updates: any = {};
+        const updates: Record<string, unknown> = {};
         if (args.content !== undefined) updates.content = String(args.content);
         if (args.tags !== undefined) updates.tags = asStringArray(args.tags) ?? [];
         if (args.category !== undefined) updates.category = String(args.category);
@@ -779,7 +779,7 @@ export async function startServer(): Promise<void> {
         const bundle = args.bundle;
         if (!bundle) throw new McpError(ErrorCode.InvalidParams, "bundle is required");
 
-        const result = await db.restoreBundle(bundle as any);
+        const result = await db.restoreBundle(bundle as JsonObject);
         return textResult(result);
       }
 
@@ -787,7 +787,7 @@ export async function startServer(): Promise<void> {
         const name = String(args.name ?? "");
         if (!name) throw new McpError(ErrorCode.InvalidParams, "name is required");
 
-        const options: any = { name };
+        const options: Record<string, unknown> = { name };
         if (args.category) options.category = String(args.category);
         if (args.tags) options.tags = asStringArray(args.tags);
         if (args.dateStart && args.dateEnd) {
@@ -806,7 +806,7 @@ export async function startServer(): Promise<void> {
         const pack = args.pack;
         if (!pack) throw new McpError(ErrorCode.InvalidParams, "pack is required");
 
-        const result = await db.importPack(pack as any);
+        const result = await db.importPack(pack as JsonObject);
         return textResult(result);
       }
 
@@ -876,12 +876,17 @@ export async function startServer(): Promise<void> {
 
       if (name === "pluresLM_update_procedure") {
         const procName = String(args.name ?? "");
-        const patch: Record<string, unknown> = {};
-        if (args.description !== undefined) patch.description = args.description;
-        if (args.trigger !== undefined) patch.trigger = args.trigger;
-        if (args.steps !== undefined) patch.steps = args.steps;
-        if (args.enabled !== undefined) patch.enabled = args.enabled;
-        const updated = await procedures.update(procName, patch as any);
+        const patch: Partial<{
+          description: string;
+          trigger: ProcedureTrigger;
+          steps: ProcedureStep[];
+          enabled: boolean;
+        }> = {};
+        if (args.description !== undefined) patch.description = String(args.description);
+        if (args.trigger !== undefined) patch.trigger = args.trigger as ProcedureTrigger;
+        if (args.steps !== undefined) patch.steps = args.steps as ProcedureStep[];
+        if (args.enabled !== undefined) patch.enabled = Boolean(args.enabled);
+        const updated = await procedures.update(procName, patch);
         return textResult({ updated: updated.name, version: updated.version });
       }
 

@@ -44,16 +44,17 @@ export class TransformersEmbeddings implements EmbeddingProvider {
       }
       
       try {
-        this.pipeline = (await pipeline("feature-extraction", this.model)) as any as EmbeddingPipeline;
+        this.pipeline = (await pipeline("feature-extraction", this.model)) as unknown as EmbeddingPipeline;
         if (this.debug) {
           console.error(`[TransformersEmbeddings] Model loaded successfully`);
         }
       } catch (err) {
-        const error = err as Error;
+        const message = err instanceof Error ? err.message : String(err);
         throw new Error(
-          `Failed to load embedding model: ${error.message}. ` +
+          `Failed to load embedding model: ${message}. ` +
           `This may be due to network restrictions or missing model files. ` +
-          `Try running with network access first to download the model, or set OPENAI_API_KEY as fallback.`
+          `Try running with network access first to download the model, or set OPENAI_API_KEY as fallback.`,
+          { cause: err }
         );
       }
     }
