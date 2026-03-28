@@ -58,11 +58,13 @@ jobs:
             const changedFiles = fs.readFileSync('/tmp/changed_files.txt', 'utf8').trim();
             const codeDiff = fs.readFileSync('/tmp/code_diff.txt', 'utf8').trim();
 
-            // Dedup
-            const existing = await github.rest.issues.listForRepo({
-              owner, repo, state: 'open', labels: 'documentation', per_page: 20
+            // Dedup (search all open documentation issues for this PR)
+            const searchQuery = `repo:${owner}/${repo} is:issue is:open label:documentation "PR #${prNum}"`;
+            const { data: searchResult } = await github.rest.search.issuesAndPullRequests({
+              q: searchQuery,
+              per_page: 1,
             });
-            if (existing.data.some(i => i.title.includes(`PR #${prNum}`))) return;
+            if (searchResult.total_count > 0) return;
 
             const body = `## Documentation Update Required
 
