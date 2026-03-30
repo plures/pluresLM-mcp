@@ -1,7 +1,7 @@
 {
   "name": "@plures/pluresLM-mcp",
   "version": "2.9.0",
-  "description": "MCP server for PluresLM \u2014 persistent distributed vector memory for AI coding assistants",
+  "description": "MCP server for PluresLM — persistent distributed vector memory for AI coding assistants",
   "type": "module",
   "license": "BSL-1.1",
   "author": "Plures <hello@plures.dev>",
@@ -41,6 +41,7 @@
     "@modelcontextprotocol/sdk": "^1.26.0",
     "@plures/pluresdb": "file:../pluresdb",
     "@plures/praxis": "^1.4.0",
+    "svelte": "^5.55.1",
     "zod": "^3.25.76"
   },
   "optionalDependencies": {

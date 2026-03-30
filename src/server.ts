@@ -1,5 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { createRequire } from "node:module";
+const pkg = createRequire(import.meta.url)("../package.json") as { version: string };
 
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
@@ -1027,7 +1029,7 @@ export async function startServer(): Promise<void> {
         res.end(JSON.stringify({ 
           status: 'ok', 
           service: 'pluresLM-mcp',
-          version: '2.4.0',
+          version: pkg?.version ?? 'unknown',
           dbPath: config.pluresDbPath,
           topic: config.pluresDbTopic,
           activeSessions: sessions.size,
