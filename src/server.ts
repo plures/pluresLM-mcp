@@ -576,9 +576,7 @@ export async function startServer(): Promise<void> {
         const threshold = args.threshold !== undefined ? Number(args.threshold) : 0.8;
 
         if (id) {
-          // PluresDB stores keys with 'memory:' prefix; search returns bare UUIDs
-          const dbKey = id.startsWith("memory:") ? id : `memory:${id}`;
-          const deleted = await db.delete(dbKey);
+          const deleted = await db.delete(id);
           return textResult({ deleted: deleted ? 1 : 0, mode: "id", id });
         }
 
@@ -841,22 +839,30 @@ export async function startServer(): Promise<void> {
         return textResult({ success, pack: name });
       }
 
-      if (name === "pluresLM_query_dsl") {
+      if (name === "pluresLM_query" || name === "pluresLM_query_dsl") {
         const query = String(args.query ?? "").trim();
         if (!query) throw new McpError(ErrorCode.InvalidParams, "query is required");
 
-        const results = await db.queryDsl(query);
-        return textResult({
-          query,
-          results: results.map(m => ({
-            id: m.id,
-            content: m.content,
-            tags: m.tags,
-            category: m.category,
-            source: m.source,
-            created_at: m.created_at,
-          })),
+        const nativeResult = db.query(query) as { nodes?: unknown[] } | undefined;
+        const nodes = nativeResult?.nodes ?? [];
+        const results = (Array.isArray(nodes) ? nodes : []).map((node) => {
+          const record = node && typeof node === "object" ? (node as Record<string, unknown>) : {};
+          const data = record && "data" in record ? record.data : record;
+          const raw = data && typeof data === "object" ? (data as Record<string, unknown>) : {};
+          if (!("id" in raw) && "id" in record) {
+            raw.id = record.id as string;
+          }
+          return {
+            id: raw.id as string | undefined,
+            content: raw.content as string | undefined,
+            tags: (raw.tags as string[]) ?? [],
+            category: raw.category as string | undefined,
+            source: raw.source as string | undefined,
+            created_at: raw.created_at as number | undefined,
+          };
         });
+
+        return textResult({ query, results });
       }
 
       // ---- Procedure tools ----

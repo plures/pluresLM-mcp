@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { PluresDatabase, type VectorSearchItem } from "@plures/pluresdb";
+import { PluresDatabase, type VectorSearchItem, type NativePluresDatabase as PluresDatabaseNative } from "@plures/pluresdb";
 
 export interface MemoryEntry {
   id: string;
@@ -30,7 +30,7 @@ export interface SearchResult {
 }
 
 // Type-safe PluresDB interface
-interface NativePluresDatabase {
+interface NativePluresDatabase extends PluresDatabaseNative {
   put(id: string, data: unknown): string;
   putWithEmbedding(id: string, data: unknown, embedding: number[]): string;
   get(id: string): unknown | null;
@@ -58,7 +58,7 @@ export class MemoryDB {
     // Direct path takes priority over topic-derived path
     const dbPath = options.dbPath || `~/.pluresdb/topics/${options.topic}`;
     const actorId = options.topic || 'pluresLM';
-    this.db = new PluresDatabase(actorId, dbPath);
+    this.db = new PluresDatabase(actorId, dbPath) as unknown as NativePluresDatabase;
   }
 
   async connect() {
@@ -182,12 +182,19 @@ export class MemoryDB {
    * Delete memory by ID
    */
   async delete(id: string): Promise<boolean> {
-    try {
-      this.db.delete(id);
-      return true;
-    } catch {
-      return false;
+    // PluresDB stores with 'memory:' prefix internally for some entries
+    const candidates = [id, `memory:${id}`];
+    for (const key of candidates) {
+      try {
+        this.db.delete(key);
+        return true;
+      } catch (e: unknown) {
+        // Log the actual error for debugging
+        console.error(`[MemoryDB] delete(${key}) failed:`, String(e));
+        continue;
+      }
     }
+    return false;
   }
 
   /**
