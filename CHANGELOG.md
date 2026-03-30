@@ -1,3 +1,14 @@
+## [2.9.1] — 2026-03-30
+
+- fix: read version from package.json in health endpoint, add svelte peer dep (ffb3ff5)
+- chore: license BSL 1.1 (commercial product) (fb1ea55)
+- chore: add copilot-pr-lifecycle.yml workflow (212706d)
+- docs: add ROADMAP.md (9e9b49b)
+- chore: cleanup and housekeeping (cffd172)
+- chore: add standard CI workflow (459303b)
+- chore: enforce strict type-safety across org (82b58ce)
+- chore: standardize lint-clean across org (d56e3c0)
+
 ## [2.9.0] — 2026-03-21
 
 - feat: Adopt @plures/praxis for declarative logic management (#9) (fc6af24)
