@@ -1,3 +1,7 @@
+## [2.9.4] — 2026-03-30
+
+- fix: delete tries both bare UUID and memory: prefix (8467e1f)
+
 ## [2.9.3] — 2026-03-30
 
 - fix: add memory: prefix to forget by ID (69899b5)
