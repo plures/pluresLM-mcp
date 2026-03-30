@@ -50,6 +50,7 @@ const ROUTE_TABLE: Record<string, RouteEntry> = {
   pluresLM_update:           { operation: 'direct-write',     requiresEmbedding: false },
   pluresLM_list:             { operation: 'listing',          requiresEmbedding: false },
   pluresLM_search_text:      { operation: 'listing',          requiresEmbedding: false },
+  pluresLM_query:            { operation: 'listing',          requiresEmbedding: false },
   pluresLM_query_dsl:        { operation: 'listing',          requiresEmbedding: false },
   pluresLM_index:            { operation: 'indexing',         requiresEmbedding: true  },
   pluresLM_profile:          { operation: 'stats',            requiresEmbedding: false },

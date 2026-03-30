@@ -40,6 +40,8 @@ interface NativePluresDatabase {
   vectorSearch(embedding: number[], limit?: number, threshold?: number): VectorSearchItem[];
   getActorId(): string;
   stats(): unknown;
+  execDsl(query: string): unknown;
+  execIr(steps: unknown[]): unknown;
 }
 
 /**
@@ -803,6 +805,20 @@ export class MemoryDB {
     } catch {
       return false;
     }
+  }
+
+  /**
+   * Execute a native PluresDB DSL query.
+   */
+  query(dsl: string): unknown {
+    return this.db.execDsl(dsl);
+  }
+
+  /**
+   * Execute a native PluresDB IR query.
+   */
+  execIr(steps: unknown[]): unknown {
+    return this.db.execIr(steps);
   }
 
   /**

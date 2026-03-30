@@ -384,6 +384,17 @@ export async function startServer(): Promise<void> {
           },
         },
         {
+          name: "pluresLM_query",
+          description: "Advanced DSL query processor.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              query: { type: "string", description: "DSL query (e.g., 'filter(category == \"decision\") |> sort(by: created_at, dir: desc) |> limit(5)')." },
+            },
+            required: ["query"],
+          },
+        },
+        {
           name: "pluresLM_query_dsl",
           description: "Advanced DSL query processor.",
           inputSchema: {
@@ -565,7 +576,9 @@ export async function startServer(): Promise<void> {
         const threshold = args.threshold !== undefined ? Number(args.threshold) : 0.8;
 
         if (id) {
-          const deleted = await db.delete(id);
+          // PluresDB stores keys with 'memory:' prefix; search returns bare UUIDs
+          const dbKey = id.startsWith("memory:") ? id : `memory:${id}`;
+          const deleted = await db.delete(dbKey);
           return textResult({ deleted: deleted ? 1 : 0, mode: "id", id });
         }
 

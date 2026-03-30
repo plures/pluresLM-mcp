@@ -29,6 +29,7 @@ const TOOL_CATEGORIES: Record<string, ToolCategory> = {
   pluresLM_update:           'core-memory',
   pluresLM_list:             'core-memory',
   pluresLM_search_text:      'search',
+  pluresLM_query:            'search',
   pluresLM_query_dsl:        'search',
   pluresLM_index:            'indexing',
   pluresLM_profile:          'status',

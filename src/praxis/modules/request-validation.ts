@@ -28,6 +28,7 @@ const CONTENT_REQUIRED = new Set(['pluresLM_store']);
 const QUERY_REQUIRED = new Set([
   'pluresLM_search',
   'pluresLM_search_text',
+  'pluresLM_query',
   'pluresLM_query_dsl',
 ]);
 

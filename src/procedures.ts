@@ -96,6 +96,7 @@ export interface ProcedureDbInterface {
   store(content: string, embedding: number[], opts?: Record<string, unknown>): Promise<{ entry: { id: string } }>;
   update(id: string, fields: Record<string, unknown>): Promise<void | boolean>;
   delete(id: string): Promise<void | boolean>;
+  execIr(steps: unknown[]): unknown;
 }
 
 export interface ProcedureResult {
@@ -315,7 +316,19 @@ export class ProcedureEngine {
     let stepsExecuted = 0;
 
     try {
-      for (const step of proc.steps) {
+      for (let i = 0; i < proc.steps.length; i++) {
+        const step = proc.steps[i];
+        if (this._isNativeStep(step)) {
+          const group = this._collectNativeSteps(proc.steps, i);
+          const result = await this._executeNativeSteps(group.steps, ctx);
+          stepsExecuted += group.steps.length;
+
+          const varName = proc.steps[group.endIndex].as ?? "$pipeline";
+          ctx.vars[varName] = result;
+          i = group.endIndex;
+          continue;
+        }
+
         const result = await this._executeStep(step, ctx);
         stepsExecuted++;
 
@@ -606,6 +619,134 @@ export class ProcedureEngine {
   // --------------------------------------------------------------------------
   // Helpers
   // --------------------------------------------------------------------------
+
+  private _isNativeStep(step: ProcedureStep): boolean {
+    return step.kind === "filter" || step.kind === "sort" || step.kind === "limit";
+  }
+
+  private _collectNativeSteps(steps: ProcedureStep[], startIndex: number): { steps: ProcedureStep[]; endIndex: number } {
+    const collected: ProcedureStep[] = [];
+    const first = steps[startIndex];
+    if (!this._isNativeStep(first)) {
+      return { steps: [first], endIndex: startIndex };
+    }
+
+    const baseFrom = String((first.params?.from as string | undefined) ?? "$pipeline");
+
+    for (let i = startIndex; i < steps.length; i++) {
+      const step = steps[i];
+      if (!this._isNativeStep(step)) break;
+
+      const stepFrom = String((step.params?.from as string | undefined) ?? "$pipeline");
+      if (stepFrom !== baseFrom) break;
+
+      if (step.as && step.as !== "$pipeline" && i !== startIndex) break;
+
+      collected.push(step);
+
+      if (step.as && step.as !== "$pipeline") break;
+    }
+
+    return { steps: collected, endIndex: startIndex + collected.length - 1 };
+  }
+
+  private async _executeNativeSteps(steps: ProcedureStep[], ctx: ProcedureRunContext): Promise<unknown> {
+    if (!steps.length) return [];
+
+    const firstParams = this._resolveParams(steps[0].params, ctx.vars);
+    const fromVar = String(firstParams.from ?? "$pipeline");
+    const pipeline = this._ensureArray(ctx.vars[fromVar]);
+
+    if (!pipeline.length) return [];
+
+    const baseIds = pipeline
+      .map(item => this._asRecord(item).id)
+      .filter((id): id is string => typeof id === "string" && id.length > 0);
+
+    const irSteps: Array<Record<string, unknown>> = [];
+
+    if (baseIds.length > 0) {
+      const predicate = baseIds.length === 1
+        ? { field: "id", cmp: "==", value: baseIds[0] }
+        : { or: baseIds.map(id => ({ field: "id", cmp: "==", value: id })) };
+      irSteps.push({ op: "filter", predicate });
+    }
+
+    for (const step of steps) {
+      const p = this._resolveParams(step.params, ctx.vars);
+      if (step.kind === "filter") {
+        const field = String(p.field ?? "");
+        const op = String(p.op ?? "==");
+        const predicate = this._buildNativePredicate(field, op, p.value);
+        irSteps.push({ op: "filter", predicate });
+      }
+
+      if (step.kind === "sort") {
+        const field = String(p.field ?? "created_at");
+        const desc = p.desc !== false;
+        irSteps.push({ op: "sort", by: field, dir: desc ? "desc" : "asc" });
+      }
+
+      if (step.kind === "limit") {
+        const count = Number(p.count ?? 10);
+        irSteps.push({ op: "limit", n: count });
+      }
+    }
+
+    const result = ctx.db.execIr(irSteps);
+    return this._normalizeNativeResult(result);
+  }
+
+  private _normalizeNativeResult(result: unknown): unknown[] {
+    if (!result) return [];
+    if (Array.isArray(result)) return result;
+    if (typeof result === "object" && result !== null) {
+      const record = result as Record<string, unknown>;
+      if (Array.isArray(record.nodes)) {
+        return record.nodes.map(node => this._unwrapNativeNode(node));
+      }
+    }
+    return [];
+  }
+
+  private _unwrapNativeNode(node: unknown): unknown {
+    if (node && typeof node === "object" && "data" in node) {
+      const record = node as Record<string, unknown>;
+      const data = record.data;
+      if (data && typeof data === "object") {
+        if (!("id" in (data as Record<string, unknown>)) && "id" in record) {
+          return { ...(data as Record<string, unknown>), id: record.id };
+        }
+        return data;
+      }
+    }
+    return node;
+  }
+
+  private _buildNativePredicate(field: string, op: string, value: unknown): Record<string, unknown> {
+    if (op === "in" && Array.isArray(value)) {
+      return { or: value.map(item => ({ field, cmp: "==", value: item })) };
+    }
+
+    const cmpMap: Record<string, string> = {
+      "==": "==",
+      "!=": "!=",
+      ">": ">",
+      ">=": ">=",
+      "<": "<",
+      "<=": "<=",
+      "contains": "contains",
+      "starts_with": "starts_with",
+      "matches": "matches",
+      "has_tag": "contains",
+    };
+
+    return {
+      field,
+      cmp: cmpMap[op] ?? "==",
+      value,
+    };
+  }
 
   /** Resolve $variable references in params */
   private _resolveParams(params: Record<string, unknown>, vars: Record<string, unknown>): Record<string, unknown> {
