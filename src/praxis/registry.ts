@@ -10,7 +10,7 @@ import {
   PraxisRegistry,
   createPraxisEngine,
   type LogicEngine,
-} from '@plures/praxis';
+} from '@plures/praxis/core';
 
 import type { PluresLmContext, TransportMode } from './context.js';
 import { toolAuthorizationModule } from './modules/tool-authorization.js';

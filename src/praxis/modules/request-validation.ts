@@ -13,7 +13,7 @@ import {
   defineContract,
   RuleResult,
   fact,
-} from '@plures/praxis';
+} from '@plures/praxis/core';
 
 import type { PluresLmContext } from '../context.js';
 
