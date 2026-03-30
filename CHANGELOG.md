@@ -1,3 +1,8 @@
+## [2.9.2] — 2026-03-30
+
+- fix: use local @plures/praxis with /core subpath (Svelte-free) (3ceb835)
+- Use @plures/praxis/core in runtime (refs #317) (55eb7ba)
+
 ## [2.9.1] — 2026-03-30
 
 - fix: read version from package.json in health endpoint, add svelte peer dep (ffb3ff5)
