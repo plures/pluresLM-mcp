@@ -1,3 +1,7 @@
+## [2.9.3] — 2026-03-30
+
+- fix: add memory: prefix to forget by ID (69899b5)
+
 ## [2.9.2] — 2026-03-30
 
 - fix: use local @plures/praxis with /core subpath (Svelte-free) (3ceb835)
