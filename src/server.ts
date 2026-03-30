@@ -163,6 +163,7 @@ export async function startServer(): Promise<void> {
               query: { type: "string", description: "Search query." },
               limit: { type: "number", description: "Max results (default 5)." },
               minScore: { type: "number", description: "Minimum cosine similarity score (default 0.3)." },
+              format: { type: "string", enum: ["compact", "verbose"], description: "Result format (default: compact). Compact returns dense JSONL assertions; verbose returns full metadata." },
             },
             required: ["query"],
           },
@@ -552,22 +553,39 @@ export async function startServer(): Promise<void> {
 
         const limit = args.limit !== undefined ? Number(args.limit) : 5;
         const minScore = args.minScore !== undefined ? Number(args.minScore) : 0.3;
+        const format = args.format === "verbose" ? "verbose" : "compact";
 
         const qvec = await embeddings.embed(query);
         const results = await db.vectorSearch(qvec, limit, minScore);
 
-        return textResult({
-          query,
-          results: results.map((r) => ({
-            id: r.entry.id,
-            content: r.entry.content,
-            score: r.score,
-            created_at: r.entry.created_at,
-            source: r.entry.source,
-            tags: r.entry.tags,
-            category: r.entry.category,
-          })),
+        if (format === "verbose") {
+          return textResult({
+            query,
+            results: results.map((r) => ({
+              id: r.entry.id,
+              content: r.entry.content,
+              score: r.score,
+              created_at: r.entry.created_at,
+              source: r.entry.source,
+              tags: r.entry.tags,
+              category: r.entry.category,
+            })),
+          });
+        }
+
+        // Compact: dense JSONL — one assertion per line, ~3x token savings
+        const lines = results.map((r) => {
+          const o: Record<string, unknown> = { fact: r.entry.content };
+          if (r.entry.category && r.entry.category !== "conversation") o.cat = r.entry.category;
+          o.score = Math.round(r.score * 1000) / 1000;
+          if (r.entry.tags?.length) o.tags = r.entry.tags;
+          if (r.entry.created_at) {
+            const d = new Date(r.entry.created_at);
+            if (!isNaN(d.getTime())) o.when = d.toISOString().slice(0, 10);
+          }
+          return JSON.stringify(o);
         });
+        return textResult(lines.join("\n"));
       }
 
       if (name === "pluresLM_forget") {
