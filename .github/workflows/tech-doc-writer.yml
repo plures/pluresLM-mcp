@@ -16,19 +16,30 @@ jobs:
       !contains(github.event.pull_request.title, '[docs]') &&
       !contains(github.event.pull_request.title, 'chore(docs)')
     steps:
+      - name: Skip when COPILOT_PAT is missing
+        id: preflight
+        env:
+          COPILOT_PAT: ${{ secrets.COPILOT_PAT }}
+        run: |
+          if [ -z "$COPILOT_PAT" ]; then
+            echo "Doc writer disabled: missing COPILOT_PAT secret"
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - uses: actions/checkout@v4
+        if: steps.preflight.outputs.enabled == 'true'
         with:
-          ref: main
+          ref: ${{ github.event.pull_request.merge_commit_sha }}
           fetch-depth: 2
 
       - name: Gather diff context
         id: context
+        if: steps.preflight.outputs.enabled == 'true'
         run: |
-          PR_TITLE="${{ github.event.pull_request.title }}"
-          PR_NUM="${{ github.event.pull_request.number }}"
-
-          CHANGED=$(git diff --name-only HEAD~1 HEAD)
-          DIFF=$(git diff HEAD~1 HEAD -- ':(exclude)*.md' ':(exclude)*.yml' ':(exclude)*.json' ':(exclude).github/' ':(exclude)docs/' | head -500)
+          CHANGED=$(git diff --name-only HEAD^1..HEAD)
+          DIFF=$(git diff HEAD^1..HEAD -- ':(exclude)*.md' ':(exclude)*.yml' ':(exclude)*.json' ':(exclude).github/' ':(exclude)docs/' | head -500)
           SRC_CHANGES=$(echo "$CHANGED" | grep -vE '^\.(github|gitignore)|^(README|CHANGELOG|docs/|\.)|\.md$|\.yml$|\.json$' | head -1)
 
           if [ -z "$SRC_CHANGES" ]; then
@@ -37,13 +48,11 @@ jobs:
           fi
 
           echo "skip=false" >> "$GITHUB_OUTPUT"
-          echo "pr_title=$PR_TITLE" >> "$GITHUB_OUTPUT"
-          echo "pr_num=$PR_NUM" >> "$GITHUB_OUTPUT"
           echo "$CHANGED" > /tmp/changed_files.txt
           echo "$DIFF" > /tmp/code_diff.txt
 
       - name: Create doc update issue (unassigned)
-        if: steps.context.outputs.skip != 'true'
+        if: steps.preflight.outputs.enabled == 'true' && steps.context.outputs.skip != 'true'
         uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.COPILOT_PAT }}
@@ -51,8 +60,8 @@ jobs:
             const fs = require('fs');
             const owner = context.repo.owner;
             const repo = context.repo.repo;
-            const prNum = ${{ github.event.pull_request.number }};
-            const prTitle = `${{ steps.context.outputs.pr_title }}`;
+            const prNum = context.payload.pull_request.number;
+            const prTitle = context.payload.pull_request.title;
 
             const changedFiles = fs.readFileSync('/tmp/changed_files.txt', 'utf8').trim();
             const codeDiff = fs.readFileSync('/tmp/code_diff.txt', 'utf8').trim();
@@ -65,7 +74,7 @@ jobs:
 
             const body = `## Documentation Update Required
 
-> ⚠️ **Do NOT assume existing docs are correct.** Verify all doc claims against the actual source code. Use \`git diff HEAD~1 HEAD\` as your source of truth.
+> ⚠️ **Do NOT assume existing docs are correct.** Verify all doc claims against the actual source code. Use \`git diff HEAD^1 HEAD\` as your source of truth.
 
 PR #${prNum} (\`${prTitle}\`) merged code changes.
 
