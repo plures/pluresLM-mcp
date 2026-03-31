@@ -1,3 +1,7 @@
+## [2.10.1] — 2026-03-31
+
+- fix(lifecycle): rewrite v9 — apply suggestions, merge, no nudges (dc08edf)
+
 ## [2.10.0] — 2026-03-30
 
 - feat: compact JSONL as default search format (460ca63)
