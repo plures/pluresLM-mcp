@@ -1,3 +1,7 @@
+## [2.10.4] — 2026-04-01
+
+- fix(lifecycle): v9.2 — process all PRs per tick (return→continue), widen bot filter (275fa3b)
+
 ## [2.10.3] — 2026-04-01
 
 - fix(lifecycle): change return→continue so all PRs process in one tick (9d7be5a)
