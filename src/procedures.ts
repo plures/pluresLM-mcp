@@ -620,8 +620,13 @@ export class ProcedureEngine {
   // Helpers
   // --------------------------------------------------------------------------
 
+  private static readonly NATIVE_STEP_KINDS = new Set<StepKind>([
+    "filter", "sort", "limit", "search", "search_text",
+    "transform", "conditional", "assign", "emit",
+  ]);
+
   private _isNativeStep(step: ProcedureStep): boolean {
-    return step.kind === "filter" || step.kind === "sort" || step.kind === "limit";
+    return ProcedureEngine.NATIVE_STEP_KINDS.has(step.kind);
   }
 
   private _collectNativeSteps(steps: ProcedureStep[], startIndex: number): { steps: ProcedureStep[]; endIndex: number } {
@@ -631,14 +636,19 @@ export class ProcedureEngine {
       return { steps: [first], endIndex: startIndex };
     }
 
-    const baseFrom = String((first.params?.from as string | undefined) ?? "$pipeline");
+    // Source steps (search/search_text) can begin a native pipeline
+    const isSourceStart = first.kind === "search" || first.kind === "search_text";
+    const baseFrom = isSourceStart ? "$pipeline" : String((first.params?.from as string | undefined) ?? "$pipeline");
 
     for (let i = startIndex; i < steps.length; i++) {
       const step = steps[i];
       if (!this._isNativeStep(step)) break;
 
+      // Source steps can only be the first step in a native group
+      if (i !== startIndex && (step.kind === "search" || step.kind === "search_text")) break;
+
       const stepFrom = String((step.params?.from as string | undefined) ?? "$pipeline");
-      if (stepFrom !== baseFrom) break;
+      if (!isSourceStart && stepFrom !== baseFrom) break;
 
       if (step.as && step.as !== "$pipeline" && i !== startIndex) break;
 
@@ -653,48 +663,125 @@ export class ProcedureEngine {
   private async _executeNativeSteps(steps: ProcedureStep[], ctx: ProcedureRunContext): Promise<unknown> {
     if (!steps.length) return [];
 
-    const firstParams = this._resolveParams(steps[0].params, ctx.vars);
-    const fromVar = String(firstParams.from ?? "$pipeline");
-    const pipeline = this._ensureArray(ctx.vars[fromVar]);
-
-    if (!pipeline.length) return [];
-
-    const baseIds = pipeline
-      .map(item => this._asRecord(item).id)
-      .filter((id): id is string => typeof id === "string" && id.length > 0);
-
     const irSteps: Array<Record<string, unknown>> = [];
 
-    if (baseIds.length > 0) {
-      const predicate = baseIds.length === 1
-        ? { field: "id", cmp: "==", value: baseIds[0] }
-        : { or: baseIds.map(id => ({ field: "id", cmp: "==", value: id })) };
-      irSteps.push({ op: "filter", predicate });
+    // Check if the first step is a source step (search/search_text)
+    const firstStep = steps[0];
+    const isSourcePipeline = firstStep.kind === "search" || firstStep.kind === "search_text";
+
+    if (!isSourcePipeline) {
+      // Existing behavior: scope to pipeline IDs
+      const firstParams = this._resolveParams(firstStep.params, ctx.vars);
+      const fromVar = String(firstParams.from ?? "$pipeline");
+      const pipeline = this._ensureArray(ctx.vars[fromVar]);
+
+      if (!pipeline.length) return [];
+
+      const baseIds = pipeline
+        .map(item => this._asRecord(item).id)
+        .filter((id): id is string => typeof id === "string" && id.length > 0);
+
+      if (baseIds.length > 0) {
+        const predicate = baseIds.length === 1
+          ? { field: "id", cmp: "==", value: baseIds[0] }
+          : { or: baseIds.map(id => ({ field: "id", cmp: "==", value: id })) };
+        irSteps.push({ op: "filter", predicate });
+      }
     }
 
     for (const step of steps) {
       const p = this._resolveParams(step.params, ctx.vars);
-      if (step.kind === "filter") {
-        const field = String(p.field ?? "");
-        const op = String(p.op ?? "==");
-        const predicate = this._buildNativePredicate(field, op, p.value);
-        irSteps.push({ op: "filter", predicate });
-      }
 
-      if (step.kind === "sort") {
-        const field = String(p.field ?? "created_at");
-        const desc = p.desc !== false;
-        irSteps.push({ op: "sort", by: field, dir: desc ? "desc" : "asc" });
-      }
+      switch (step.kind) {
+        case "search": {
+          // Vector search — embed query, push as IR VectorSearch
+          const query = String(p.query ?? "");
+          const limit = Number(p.limit ?? 10);
+          const embedding = await ctx.embed(query);
+          irSteps.push({ op: "vector_search", embedding, limit, min_score: Number(p.min_score ?? p.minScore ?? 0) });
+          break;
+        }
 
-      if (step.kind === "limit") {
-        const count = Number(p.count ?? 10);
-        irSteps.push({ op: "limit", n: count });
+        case "search_text": {
+          const query = String(p.query ?? "");
+          const limit = Number(p.limit ?? 10);
+          irSteps.push({ op: "text_search", query, limit, field: String(p.field ?? "text") });
+          break;
+        }
+
+        case "filter": {
+          const field = String(p.field ?? "");
+          const op = String(p.op ?? "==");
+          const predicate = this._buildNativePredicate(field, op, p.value);
+          irSteps.push({ op: "filter", predicate });
+          break;
+        }
+
+        case "sort": {
+          const field = String(p.field ?? "created_at");
+          const desc = p.desc !== false;
+          irSteps.push({ op: "sort", by: field, dir: desc ? "desc" : "asc" });
+          break;
+        }
+
+        case "limit": {
+          const count = Number(p.count ?? 10);
+          irSteps.push({ op: "limit", n: count });
+          break;
+        }
+
+        case "transform": {
+          const format = String(p.format ?? "structured");
+          irSteps.push({ op: "transform", format, max_chars: Number(p.max_chars ?? p.maxChars ?? 0) });
+          break;
+        }
+
+        case "conditional": {
+          const condition = p.condition as Record<string, unknown> ?? {};
+          const predicate = this._buildNativePredicate(
+            String(condition.field ?? ""),
+            String(condition.op ?? "=="),
+            condition.value,
+          );
+          irSteps.push({
+            op: "conditional",
+            predicate,
+            then_steps: ((p.then_steps ?? p.thenSteps ?? []) as ProcedureStep[]).map(s => {
+              const sp = this._resolveParams(s.params, ctx.vars);
+              return this._stepToIr(s.kind, sp);
+            }),
+            else_steps: ((p.else_steps ?? p.elseSteps ?? []) as ProcedureStep[]).map(s => {
+              const sp = this._resolveParams(s.params, ctx.vars);
+              return this._stepToIr(s.kind, sp);
+            }),
+          });
+          break;
+        }
+
+        case "assign": {
+          irSteps.push({ op: "assign", name: String(p.name ?? step.as ?? "result") });
+          break;
+        }
+
+        case "emit": {
+          irSteps.push({ op: "emit", label: String(p.label ?? "output"), from_var: String(p.from_var ?? p.fromVar ?? "") || null });
+          break;
+        }
       }
     }
 
     const result = ctx.db.execIr(irSteps);
     return this._normalizeNativeResult(result);
+  }
+
+  /** Convert a single step kind + params to an IR op object */
+  private _stepToIr(kind: StepKind, p: Record<string, unknown>): Record<string, unknown> {
+    switch (kind) {
+      case "filter": return { op: "filter", predicate: this._buildNativePredicate(String(p.field ?? ""), String(p.op ?? "=="), p.value) };
+      case "sort": return { op: "sort", by: String(p.field ?? "created_at"), dir: p.desc !== false ? "desc" : "asc" };
+      case "limit": return { op: "limit", n: Number(p.count ?? 10) };
+      default: return { op: "limit", n: 999999 }; // passthrough
+    }
   }
 
   private _normalizeNativeResult(result: unknown): unknown[] {
