@@ -1,0 +1,1 @@
+{ "name": "@plures/praxis", "version": "0.0.0-stub", "exports": { ".": { "types": "./core.d.ts" }, "./core": { "types": "./core.d.ts" } } }

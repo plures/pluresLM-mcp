@@ -1,7 +1,7 @@
 {
   "name": "@plures/pluresLM-mcp",
   "version": "2.10.4",
-  "description": "MCP server for PluresLM — persistent distributed vector memory for AI coding assistants",
+  "description": "MCP server for PluresLM \u2014 persistent distributed vector memory for AI coding assistants",
   "type": "module",
   "license": "BSL-1.1",
   "author": "Plures <hello@plures.dev>",
@@ -34,13 +34,13 @@
     "start": "node dist/index.js",
     "dev": "tsx src/index.ts",
     "lint": "eslint .",
-    "prepublishOnly": "npm run build"
+    "prepublishOnly": "npm run build",
+    "build:ci": "tsc -p tsconfig.ci.json",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@huggingface/transformers": "^3.8.1",
     "@modelcontextprotocol/sdk": "^1.26.0",
-    "@plures/pluresdb": "file:../pluresdb",
-    "@plures/praxis": "file:../praxis",
     "svelte": "^5.55.1",
     "zod": "^3.25.76"
   },
@@ -57,5 +57,17 @@
   },
   "engines": {
     "node": ">=24"
+  },
+  "peerDependencies": {
+    "@plures/pluresdb": ">=2.9.0",
+    "@plures/praxis": ">=2.0.0"
+  },
+  "peerDependenciesMeta": {
+    "@plures/pluresdb": {
+      "optional": true
+    },
+    "@plures/praxis": {
+      "optional": true
+    }
   }
 }
