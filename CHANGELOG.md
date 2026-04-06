@@ -1,3 +1,10 @@
+## [2.10.5] — 2026-04-06
+
+- fix: resolve CI build failures (issue #140) (5dbfc1f)
+- ci: standardize Node version to lts/* — remove hardcoded versions (3ef4cc6)
+- chore: apply org-standard automation files (#11) (456f32d)
+- ci: centralize lifecycle — event-driven with schedule guard (1ed59c2)
+
 ## [2.10.4] — 2026-04-01
 
 - fix(lifecycle): v9.2 — process all PRs per tick (return→continue), widen bot filter (275fa3b)

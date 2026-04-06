@@ -1,7 +1,7 @@
 {
   "name": "@plures/pluresLM-mcp",
-  "version": "2.10.4",
-  "description": "MCP server for PluresLM \u2014 persistent distributed vector memory for AI coding assistants",
+  "version": "2.10.5",
+  "description": "MCP server for PluresLM — persistent distributed vector memory for AI coding assistants",
   "type": "module",
   "license": "BSL-1.1",
   "author": "Plures <hello@plures.dev>",
