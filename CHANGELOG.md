@@ -1,3 +1,7 @@
+## [2.11.0] — 2026-04-06
+
+- feat: expand native procedure execution to all PluresDB IR step types (#12) (8d1faaf)
+
 ## [2.10.5] — 2026-04-06
 
 - fix: resolve CI build failures (issue #140) (5dbfc1f)
