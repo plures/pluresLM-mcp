@@ -97,6 +97,8 @@ export interface ProcedureDbInterface {
   update(id: string, fields: Record<string, unknown>): Promise<void | boolean>;
   delete(id: string): Promise<void | boolean>;
   execIr(steps: unknown[]): unknown;
+  /** List memories with optional filters (used for procedure persistence) */
+  listMemories?(opts?: { limit?: number; category?: string }): Promise<Array<{ id: string; content: string; tags: string[]; category?: string; source: string; created_at: number }>>;
 }
 
 export interface ProcedureResult {
@@ -199,6 +201,21 @@ export class ProcedureEngine {
     this._teardownTrigger(proc);
     this._setupTrigger(updated);
 
+    // Delete old versions from DB before storing new one
+    try {
+      if (this.db.listMemories) {
+        const stored = await this.db.listMemories({ limit: 50, category: PROCEDURE_CATEGORY });
+        for (const item of stored) {
+          try {
+            const parsed = JSON.parse(item.content) as ProcedureDefinition;
+            if (parsed.name === name) {
+              await this.db.delete(item.id);
+            }
+          } catch { /* skip */ }
+        }
+      }
+    } catch { /* best effort */ }
+
     // Re-persist
     const embedding = await this.embed(`procedure: ${updated.name} — ${updated.description ?? ""}`);
     await this.db.store(JSON.stringify(updated), embedding, {
@@ -216,6 +233,24 @@ export class ProcedureEngine {
     if (!proc) throw new Error(`procedure "${name}" not found`);
     this._teardownTrigger(proc);
     this.procedures.delete(name);
+
+    // Delete all stored versions from DB
+    try {
+      if (this.db.listMemories) {
+        const stored = await this.db.listMemories({ limit: 50, category: PROCEDURE_CATEGORY });
+        for (const item of stored) {
+          try {
+            const parsed = JSON.parse(item.content) as ProcedureDefinition;
+            if (parsed.name === name) {
+              await this.db.delete(item.id);
+            }
+          } catch { /* skip malformed */ }
+        }
+      }
+    } catch (err) {
+      this._log(`warning: failed to delete procedure from DB: ${err}`);
+    }
+
     this._log(`removed procedure: ${name}`);
   }
 
@@ -233,12 +268,26 @@ export class ProcedureEngine {
 
   async loadFromDb(): Promise<number> {
     try {
-      const results = await this.db.searchText("procedure:", { limit: 100, category: PROCEDURE_CATEGORY });
+      let items: Array<{ id: string; content: string; tags: string[]; category?: string; source: string; created_at: number }> = [];
+
+      // Primary: use listMemories with category filter (avoids keyword search issues)
+      if (this.db.listMemories) {
+        items = await this.db.listMemories({ limit: 200, category: PROCEDURE_CATEGORY });
+      }
+
+      // Fallback: text search for "procedure" in system:procedure category
+      if (items.length === 0) {
+        items = await this.db.searchText("procedure", { limit: 200, category: PROCEDURE_CATEGORY });
+      }
+
       let loaded = 0;
-      for (const item of results) {
+      for (const item of items) {
         try {
           const proc = JSON.parse(item.content) as ProcedureDefinition;
           if (proc.name && proc.steps) {
+            // If duplicate name, keep the newer version
+            const existing = this.procedures.get(proc.name);
+            if (existing && existing.version >= proc.version) continue;
             this.procedures.set(proc.name, proc);
             if (proc.enabled) this._setupTrigger(proc);
             loaded++;
@@ -621,8 +670,7 @@ export class ProcedureEngine {
   // --------------------------------------------------------------------------
 
   private static readonly NATIVE_STEP_KINDS = new Set<StepKind>([
-    "filter", "sort", "limit", "search", "search_text",
-    "transform", "conditional", "assign", "emit",
+    "filter", "sort", "limit",
   ]);
 
   private _isNativeStep(step: ProcedureStep): boolean {
@@ -840,12 +888,43 @@ export class ProcedureEngine {
     const resolved: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(params)) {
       if (typeof value === "string" && value.startsWith("$")) {
-        resolved[key] = vars[value] ?? value;
+        resolved[key] = this._resolveVar(value, vars);
       } else {
         resolved[key] = value;
       }
     }
     return resolved;
+  }
+
+  /** Resolve a $variable reference, supporting dot-path access (e.g. $input.query) */
+  private _resolveVar(ref: string, vars: Record<string, unknown>): unknown {
+    // Try exact match first (e.g. "$pipeline", "$input")
+    if (ref in vars) return vars[ref];
+
+    // Try without $ prefix (step `as` names are stored without $)
+    const bare = ref.slice(1); // "results" from "$results"
+    if (bare in vars) return vars[bare];
+
+    // Dot-path resolution: "$input.query" → vars["$input"]["query"]
+    const dotIdx = ref.indexOf(".");
+    if (dotIdx > 0) {
+      const root = ref.slice(0, dotIdx);  // "$input"
+      const path = ref.slice(dotIdx + 1); // "query" or "nested.deep"
+
+      // Try with $ prefix first, then without
+      const rootVal = vars[root] ?? vars[root.slice(1)];
+      if (rootVal != null && typeof rootVal === "object") {
+        const parts = path.split(".");
+        let current: unknown = rootVal;
+        for (const part of parts) {
+          if (current == null || typeof current !== "object") return ref;
+          current = (current as Record<string, unknown>)[part];
+        }
+        return current ?? ref;
+      }
+    }
+
+    return ref; // return the raw string if unresolvable
   }
 
   private _ensureArray(value: unknown): unknown[] {

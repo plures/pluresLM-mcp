@@ -51,6 +51,9 @@ const TOOL_CATEGORIES: Record<string, ToolCategory> = {
   pluresLM_list_procedures:  'procedures',
   pluresLM_update_procedure: 'procedures',
   pluresLM_delete_procedure: 'procedures',
+  pluresLM_autolink:         'maintenance',
+  pluresLM_graph_neighbors:  'search',
+  pluresLM_graph_insights:   'status',
 };
 
 // ---------------------------------------------------------------------------

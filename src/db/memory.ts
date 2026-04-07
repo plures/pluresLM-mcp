@@ -42,6 +42,18 @@ interface NativePluresDatabase extends PluresDatabaseNative {
   stats(): unknown;
   execDsl(query: string): unknown;
   execIr(steps: unknown[]): unknown;
+  // Agens Runtime (pluresdb-node >= 3.3.0)
+  agensEmit?(event: Record<string, unknown>): string;
+  agensEmitPraxis?(event: Record<string, unknown>): string;
+  agensListEvents?(sinceIso: string): Record<string, unknown>[];
+  agensStateGet?(key: string): unknown;
+  agensStateSet?(key: string, value: unknown): void;
+  agensStateWatch?(sinceIso: string): Array<{ key: string; value: unknown }>;
+  agensTimerSchedule?(name: string, intervalSecs: number, payload: unknown): string;
+  agensTimerCancel?(timerId: string): boolean;
+  agensTimerList?(): Array<Record<string, unknown>>;
+  agensTimerDue?(): Array<Record<string, unknown>>;
+  agensTimerReschedule?(timerId: string): boolean;
 }
 
 /**
@@ -456,34 +468,54 @@ export class MemoryDB {
     duplicatesRemoved: number;
     suggestions: Array<{original: MemoryEntry, duplicate: MemoryEntry, similarity: number}>;
   }> {
+    // Batched approach: iterate memories in chunks, use HNSW vector search
+    // to find near-duplicates instead of O(n²) brute-force comparison.
+    const BATCH_SIZE = 100;
+    const MAX_DUPLICATES = 500; // cap to prevent runaway
+
     const allItems = this.db.list() || [];
     const memories = allItems.filter(item => this.isValidMemoryEntry(item)).map(item => this.extractMemoryEntry(item));
 
     const suggestions: Array<{original: MemoryEntry, duplicate: MemoryEntry, similarity: number}> = [];
+    const removed = new Set<string>(); // track already-removed IDs
     let duplicatesRemoved = 0;
 
-    // Compare each memory with all others
-    for (let i = 0; i < memories.length; i++) {
-      for (let j = i + 1; j < memories.length; j++) {
-        const memA = memories[i];
-        const memB = memories[j];
+    for (let batch = 0; batch < memories.length && suggestions.length < MAX_DUPLICATES; batch += BATCH_SIZE) {
+      const chunk = memories.slice(batch, batch + BATCH_SIZE);
 
-        // Skip if either has empty embedding
-        if (!memA.embedding?.length || !memB.embedding?.length) continue;
+      for (const mem of chunk) {
+        if (removed.has(mem.id)) continue;
+        if (!mem.embedding?.length) continue;
 
-        const similarity = this.cosineSimilarity(memA.embedding, memB.embedding);
-        
-        if (similarity >= similarityThreshold) {
-          // Keep the newer one (higher created_at), remove older
-          const [original, duplicate] = memA.created_at > memB.created_at ? [memA, memB] : [memB, memA];
-          
-          suggestions.push({ original, duplicate, similarity });
+        // Use HNSW to find nearest neighbors (fast O(log n) per query)
+        try {
+          const neighbors = await this.vectorSearch(mem.embedding, 5, similarityThreshold);
 
-          if (!dryRun) {
-            await this.delete(duplicate.id);
-            duplicatesRemoved++;
+          for (const { entry: neighbor, score: similarity } of neighbors) {
+            if (neighbor.id === mem.id) continue;
+            if (removed.has(neighbor.id)) continue;
+
+            // Keep the newer one, mark older as duplicate
+            const [original, duplicate] = mem.created_at > neighbor.created_at
+              ? [mem, neighbor]
+              : [neighbor, mem];
+
+            suggestions.push({ original, duplicate, similarity });
+
+            if (!dryRun) {
+              await this.delete(duplicate.id);
+              duplicatesRemoved++;
+            }
+            removed.add(duplicate.id);
+
+            if (suggestions.length >= MAX_DUPLICATES) break;
           }
+        } catch {
+          // Skip memories that fail vector search
+          continue;
         }
+
+        if (suggestions.length >= MAX_DUPLICATES) break;
       }
     }
 

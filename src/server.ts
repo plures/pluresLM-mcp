@@ -103,7 +103,11 @@ export async function startServer(): Promise<void> {
 
   // Initialize procedure engine
   const procedures = new ProcedureEngine({
-    db,
+    db: Object.assign(db, {
+      listMemories: async (opts?: { limit?: number; category?: string }) => {
+        return db.list({ limit: opts?.limit ?? 200, category: opts?.category });
+      },
+    }),
     embed: async (text: string) => embeddings.embed(text),
     onCue: async (name, payload) => {
       // Fire on_cue procedures
@@ -485,6 +489,40 @@ export async function startServer(): Promise<void> {
             required: ["name"],
           },
         },
+        {
+          name: "pluresLM_autolink",
+          description: "Trigger automatic relationship discovery between memories.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              mode: { type: "string", enum: ["all", "incremental", "memory"] },
+              target: { type: "string", description: "Memory UUID when mode=memory" },
+            },
+            required: ["mode"],
+          },
+        },
+        {
+          name: "pluresLM_graph_neighbors",
+          description: "Find memories related to a given memory via vector similarity.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              memoryId: { type: "string" },
+              depth: { type: "number", description: "Number of neighbors to return (default 5)" },
+            },
+            required: ["memoryId"],
+          },
+        },
+        {
+          name: "pluresLM_graph_insights",
+          description: "Analyze memory relationship patterns — category distribution and stats.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              timespan: { type: "string", description: "Timespan label e.g. '7d', '30d'" },
+            },
+          },
+        },
       ],
     };
   });
@@ -494,7 +532,7 @@ export async function startServer(): Promise<void> {
     const args = (request.params.arguments ?? {}) as JsonObject;
 
     // --- Praxis: update context and step the logic engine ---
-    praxisEngine.updateContext((ctx) => ({
+    praxisEngine.updateContext((ctx: any) => ({
       ...ctx,
       request: { toolName: name, args, timestamp: Date.now() },
       session: { ...ctx.session, lastActiveAt: Date.now(), requestCount: ctx.session.requestCount + 1 },
@@ -936,6 +974,85 @@ export async function startServer(): Promise<void> {
         const procName = String(args.name ?? "");
         await procedures.remove(procName);
         return textResult({ deleted: procName });
+      }
+
+      // --- Graph / Autolink tools ---
+
+      if (name === "pluresLM_autolink") {
+        const mode = String(args.mode ?? "incremental");
+        const BATCH_SIZE = 50;
+        const MAX_LINKS = 200;
+        let linked = 0;
+
+        if (mode === "memory" && args.target) {
+          const targetMem = await db.get(String(args.target));
+          if (!targetMem?.embedding?.length) return textResult({ linked: 0, error: "memory not found or has no embedding" });
+          const neighbors = await db.vectorSearch(targetMem.embedding, 5, 0.7);
+          linked = neighbors.filter(n => n.entry.id !== String(args.target)).length;
+          return textResult({ mode, linked, target: args.target });
+        }
+
+        const allMemories = await db.list({ limit: mode === "all" ? 5000 : BATCH_SIZE, sortBy: "created_at", sortOrder: "desc" });
+        const relationships: Array<{from: string; to: string; score: number}> = [];
+
+        for (const mem of allMemories) {
+          if (linked >= MAX_LINKS) break;
+          if (!mem?.embedding?.length) continue;
+          try {
+            const neighbors = await db.vectorSearch(mem.embedding, 3, 0.75);
+            for (const n of neighbors) {
+              if (n.entry.id === mem.id) continue;
+              relationships.push({ from: mem.id, to: n.entry.id, score: n.score });
+              linked++;
+            }
+          } catch { continue; }
+        }
+
+        return textResult({ mode, linked, sample: relationships.slice(0, 10) });
+      }
+
+      if (name === "pluresLM_graph_neighbors") {
+        const memoryId = String(args.memoryId ?? "");
+        const depth = Number(args.depth ?? 5);
+        const mem = await db.get(memoryId);
+        if (!mem?.embedding?.length) return textResult({ error: "memory not found or has no embedding" });
+        const neighbors = await db.vectorSearch(mem.embedding, depth + 1, 0.5);
+        const results = neighbors
+          .filter(n => n.entry.id !== memoryId)
+          .slice(0, depth)
+          .map(n => ({ id: n.entry.id, content: n.entry.content?.slice(0, 200), score: n.score, category: n.entry.category }));
+        return textResult({ memoryId, neighbors: results });
+      }
+
+      if (name === "pluresLM_graph_insights") {
+        const stats = await db.stats();
+        const allMemories = await db.list({ limit: 10000 });
+        const categories: Record<string, number> = {};
+        const tagCounts: Record<string, number> = {};
+        let withEmbedding = 0;
+
+        for (const mem of allMemories) {
+          const cat = mem.category || "uncategorized";
+          categories[cat] = (categories[cat] || 0) + 1;
+          if (mem.embedding?.length) withEmbedding++;
+          if (Array.isArray(mem.tags)) {
+            for (const tag of mem.tags) {
+              tagCounts[tag] = (tagCounts[tag] || 0) + 1;
+            }
+          }
+        }
+
+        const topTags = Object.entries(tagCounts)
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, 20)
+          .map(([tag, count]) => ({ tag, count }));
+
+        return textResult({
+          memoryCount: stats.memoryCount,
+          withEmbedding,
+          categories,
+          topTags,
+        });
       }
 
       throw new McpError(ErrorCode.MethodNotFound, `Unknown tool: ${name}`);
