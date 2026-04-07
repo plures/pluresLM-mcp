@@ -270,21 +270,28 @@ export class ProcedureEngine {
     try {
       let items: Array<{ id: string; content: string; tags: string[]; category?: string; source: string; created_at: number }> = [];
 
-      // Primary: use listMemories with category filter (avoids keyword search issues)
+      // Primary: use listMemories with category filter
       if (this.db.listMemories) {
         items = await this.db.listMemories({ limit: 200, category: PROCEDURE_CATEGORY });
       }
 
-      // Fallback: text search for "procedure" in system:procedure category
+      // Fallback: text search
       if (items.length === 0) {
         items = await this.db.searchText("procedure", { limit: 200, category: PROCEDURE_CATEGORY });
       }
+
+      // Track DB entry IDs per procedure name for dedup cleanup
+      const dbEntries = new Map<string, Array<{ id: string; version: number }>>();
 
       let loaded = 0;
       for (const item of items) {
         try {
           const proc = JSON.parse(item.content) as ProcedureDefinition;
           if (proc.name && proc.steps) {
+            // Track all DB entries for this procedure name
+            if (!dbEntries.has(proc.name)) dbEntries.set(proc.name, []);
+            dbEntries.get(proc.name)!.push({ id: item.id, version: proc.version ?? 0 });
+
             // If duplicate name, keep the newer version
             const existing = this.procedures.get(proc.name);
             if (existing && existing.version >= proc.version) continue;
@@ -294,6 +301,22 @@ export class ProcedureEngine {
           }
         } catch { /* skip malformed */ }
       }
+
+      // Dedup: remove older versions from DB (keep only highest version per name)
+      let cleaned = 0;
+      for (const [, entries] of dbEntries) {
+        if (entries.length <= 1) continue;
+        entries.sort((a, b) => b.version - a.version);
+        // Delete all but the highest version
+        for (let i = 1; i < entries.length; i++) {
+          try {
+            await this.db.delete(entries[i].id);
+            cleaned++;
+          } catch { /* best effort */ }
+        }
+      }
+      if (cleaned > 0) this._log(`cleaned ${cleaned} stale procedure entries from DB`);
+
       this._log(`loaded ${loaded} procedures from DB`);
       return loaded;
     } catch (err) {
@@ -367,10 +390,12 @@ export class ProcedureEngine {
     try {
       for (let i = 0; i < proc.steps.length; i++) {
         const step = proc.steps[i];
+        const stepStart = Date.now();
         if (this._isNativeStep(step)) {
           const group = this._collectNativeSteps(proc.steps, i);
           const result = await this._executeNativeSteps(group.steps, ctx);
           stepsExecuted += group.steps.length;
+          this._log(`[proc:${proc.name}] steps ${i+1}-${group.endIndex+1}/${proc.steps.length}: native(${group.steps.map(s=>s.kind).join(',')}) (${Date.now()-stepStart}ms)`);
 
           const varName = proc.steps[group.endIndex].as ?? "$pipeline";
           ctx.vars[varName] = result;
@@ -380,6 +405,8 @@ export class ProcedureEngine {
 
         const result = await this._executeStep(step, ctx);
         stepsExecuted++;
+        const resultLen = Array.isArray(result) ? `${result.length} results` : typeof result;
+        this._log(`[proc:${proc.name}] step ${i+1}/${proc.steps.length}: ${step.kind}${step.as ? ` as ${step.as}` : ''} → ${resultLen} (${Date.now()-stepStart}ms)`);
 
         // Assign result to variable (default: $pipeline)
         const varName = step.as ?? "$pipeline";

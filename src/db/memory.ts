@@ -123,28 +123,37 @@ export class MemoryDB {
 
   /**
    * High-performance vector similarity search using PluresDB's native HNSW index
-   * This scales to 100k+ memories efficiently (O(log n) instead of O(n))
+   * Supports post-filtering by category, tags, and date range.
    */
-  async vectorSearch(queryVector: number[], limit: number = 10, minScore: number = 0.3): Promise<SearchResult[]> {
-    // Use PluresDB's native vectorSearch - this uses HNSW indexing for scalability
-    const nativeResults = this.db.vectorSearch(queryVector, limit, minScore);
+  async vectorSearch(queryVector: number[], limit: number = 10, minScore: number = 0.3, filter?: {
+    category?: string;
+    tags?: string[];
+    after?: number;
+    before?: number;
+  }): Promise<SearchResult[]> {
+    // Over-fetch when filtering to ensure we get enough results after filtering
+    const fetchLimit = filter ? limit * 4 : limit;
+    const nativeResults = this.db.vectorSearch(queryVector, fetchLimit, minScore);
     
-    const results: SearchResult[] = [];
+    let results: SearchResult[] = [];
     
     for (const item of nativeResults) {
-      // Type-safe conversion from VectorSearchItem
       const rawEntry = item.data;
       
-      // Ensure the entry has the expected MemoryEntry structure
       if (this.isValidMemoryEntry(rawEntry)) {
-        results.push({
-          entry: this.extractMemoryEntry(rawEntry),
-          score: item.score
-        });
+        const entry = this.extractMemoryEntry(rawEntry);
+        
+        // Post-filter
+        if (filter?.category && entry.category !== filter.category) continue;
+        if (filter?.tags?.length && !filter.tags.some(t => entry.tags?.includes(t))) continue;
+        if (filter?.after && entry.created_at < filter.after) continue;
+        if (filter?.before && entry.created_at > filter.before) continue;
+        
+        results.push({ entry, score: item.score });
       }
     }
 
-    return results;
+    return results.slice(0, limit);
   }
 
   /**
@@ -272,17 +281,25 @@ export class MemoryDB {
     return memories.map(item => item.content);
   }
 
+  // Stats cache (60s TTL)
+  private _statsCache: { data: Record<string, unknown>; ts: number } | null = null;
+  private static readonly STATS_TTL_MS = 60_000;
+
   /**
    * Get database statistics including native PluresDB metrics
    */
   async stats(): Promise<Record<string, unknown>> {
+    if (this._statsCache && (Date.now() - this._statsCache.ts) < MemoryDB.STATS_TTL_MS) {
+      return this._statsCache.data;
+    }
+
     const nativeStats = this.db.stats() || {};
     const allItems = this.db.list() || [];
     
     const memoryCount = allItems.filter(item => this.isValidMemoryEntry(item)).length;
     const profileCount = this.db.listByType('profile')?.length || 0;
     
-    return {
+    const data = {
       version: "2.1.0-pluresdb-native",
       backend: "PluresDB-Native-HNSW",
       memoryCount,
@@ -293,6 +310,9 @@ export class MemoryDB {
       actorId: this.db.getActorId(),
       native: nativeStats
     };
+
+    this._statsCache = { data, ts: Date.now() };
+    return data;
   }
 
   /**

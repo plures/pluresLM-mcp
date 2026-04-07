@@ -1,7 +1,19 @@
 import fs from "node:fs/promises";
+import { readFileSync } from "node:fs";
 import path from "node:path";
 import { createRequire } from "node:module";
+import { fileURLToPath } from "node:url";
 const pkg = createRequire(import.meta.url)("../package.json") as { version: string };
+
+// Load build info if available
+let buildInfo: { version: string; gitSha: string; buildTime: string } | null = null;
+try {
+  const __dirname = path.dirname(fileURLToPath(import.meta.url));
+  buildInfo = JSON.parse(readFileSync(path.join(__dirname, 'BUILD_INFO.json'), 'utf8'));
+} catch {}
+const VERSION = buildInfo?.version ?? pkg?.version ?? 'unknown';
+const GIT_SHA = buildInfo?.gitSha ?? 'unknown';
+const START_TIME = Date.now();
 
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
@@ -160,13 +172,17 @@ export async function startServer(): Promise<void> {
         },
         {
           name: "pluresLM_search",
-          description: "Semantic search across memories.",
+          description: "Semantic search across memories with optional filters.",
           inputSchema: {
             type: "object",
             properties: {
               query: { type: "string", description: "Search query." },
               limit: { type: "number", description: "Max results (default 5)." },
               minScore: { type: "number", description: "Minimum cosine similarity score (default 0.3)." },
+              category: { type: "string", description: "Filter by category (exact match)." },
+              tags: { type: "array", items: { type: "string" }, description: "Filter by tags (any match)." },
+              after: { type: "string", description: "Only results after this date (YYYY-MM-DD or timestamp)." },
+              before: { type: "string", description: "Only results before this date (YYYY-MM-DD or timestamp)." },
               format: { type: "string", enum: ["compact", "verbose"], description: "Result format (default: compact). Compact returns dense JSONL assertions; verbose returns full metadata." },
             },
             required: ["query"],
@@ -551,6 +567,7 @@ export async function startServer(): Promise<void> {
       }
     }
 
+    const toolStart = Date.now();
     try {
       if (name === "pluresLM_store") {
         const content = String(args.content ?? "").trim();
@@ -593,8 +610,22 @@ export async function startServer(): Promise<void> {
         const minScore = args.minScore !== undefined ? Number(args.minScore) : 0.3;
         const format = args.format === "verbose" ? "verbose" : "compact";
 
+        // Build filter from optional params
+        const filter: { category?: string; tags?: string[]; after?: number; before?: number } = {};
+        if (args.category) filter.category = String(args.category);
+        if (args.tags) filter.tags = asStringArray(args.tags);
+        if (args.after) {
+          const d = new Date(String(args.after));
+          filter.after = isNaN(d.getTime()) ? Number(args.after) : d.getTime();
+        }
+        if (args.before) {
+          const d = new Date(String(args.before));
+          filter.before = isNaN(d.getTime()) ? Number(args.before) : d.getTime();
+        }
+        const hasFilter = Object.keys(filter).length > 0;
+
         const qvec = await embeddings.embed(query);
-        const results = await db.vectorSearch(qvec, limit, minScore);
+        const results = await db.vectorSearch(qvec, limit, minScore, hasFilter ? filter : undefined);
 
         if (format === "verbose") {
           return textResult({
@@ -1057,6 +1088,8 @@ export async function startServer(): Promise<void> {
 
       throw new McpError(ErrorCode.MethodNotFound, `Unknown tool: ${name}`);
     } catch (err) {
+      const elapsed = Date.now() - toolStart;
+      console.error(`[tool] ${name} → error (${elapsed}ms): ${(err as Error)?.message ?? err}`);
       if (err instanceof McpError) throw err;
       throw new McpError(ErrorCode.InternalError, String((err as Error)?.message ?? err));
     }
@@ -1179,14 +1212,20 @@ export async function startServer(): Promise<void> {
     const httpServer = createServer(async (req, res) => {
       // Health endpoint (no auth required)
       if (req.url === '/health') {
+        const memUsage = process.memoryUsage();
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ 
           status: 'ok', 
           service: 'pluresLM-mcp',
-          version: pkg?.version ?? 'unknown',
+          version: VERSION,
+          gitSha: GIT_SHA,
+          uptime_s: Math.round((Date.now() - START_TIME) / 1000),
+          memory_mb: Math.round(memUsage.rss / 1024 / 1024),
+          heap_mb: Math.round(memUsage.heapUsed / 1024 / 1024),
           dbPath: config.pluresDbPath,
           topic: config.pluresDbTopic,
           activeSessions: sessions.size,
+          procedures: procedures.list().length,
         }));
         return;
       }
@@ -1228,9 +1267,10 @@ export async function startServer(): Promise<void> {
     });
 
     httpServer.listen(config.port, config.host, () => {
-      console.error(`🚀 PluresLM MCP Server listening on http://${config.host}:${config.port}/mcp`);
+      console.error(`🚀 PluresLM MCP Server v${VERSION} (${GIT_SHA}) listening on http://${config.host}:${config.port}/mcp`);
       console.error(`   Health: http://${config.host}:${config.port}/health`);
       console.error(`   DB: ${config.pluresDbPath || config.pluresDbTopic}`);
+      console.error(`   Procedures loaded: ${procedures.list().length}`);
     });
 
     transport = null; // HTTP mode — sessions manage their own transports
