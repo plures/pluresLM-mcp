@@ -910,48 +910,157 @@ export class ProcedureEngine {
     };
   }
 
-  /** Resolve $variable references in params */
+  /**
+   * Deep-resolve $variable references throughout a params object.
+   *
+   * Handles:
+   *   - Top-level strings: { query: "$input.query" } → resolves
+   *   - Nested objects:    { meta: { task: "$input.task" } } → recurses and resolves
+   *   - Arrays:            { sources: ["$a", "$b"] } → resolves each element
+   *   - Template strings:  { msg: "Found $results.length items" } → interpolates
+   *   - Array indexing:    "$results[0].content" → resolves
+   *   - Bare names:        "$myvar" → checks vars["myvar"] (step `as` names have no $)
+   */
   private _resolveParams(params: Record<string, unknown>, vars: Record<string, unknown>): Record<string, unknown> {
     const resolved: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(params)) {
-      if (typeof value === "string" && value.startsWith("$")) {
-        resolved[key] = this._resolveVar(value, vars);
-      } else {
-        resolved[key] = value;
-      }
+      resolved[key] = this._resolveDeep(value, vars);
     }
     return resolved;
   }
 
-  /** Resolve a $variable reference, supporting dot-path access (e.g. $input.query) */
+  /**
+   * Recursively resolve $variable references in any value type.
+   */
+  private _resolveDeep(value: unknown, vars: Record<string, unknown>): unknown {
+    if (typeof value === "string") {
+      // Pure reference: entire string is a $var
+      if (value.startsWith("$") && !value.includes(" ")) {
+        const resolved = this._resolveVar(value, vars);
+        this._log(`_resolveDeep: "${value}" → ${resolved === undefined ? 'undefined' : typeof resolved}`);
+        return resolved;
+      }
+      // Template interpolation: "Found $results.length items in $input.category"
+      if (value.includes("$")) {
+        return value.replace(/\$(\w+(?:\.\w+)*(?:\[\d+\])*)/g, (_match, path) => {
+          const resolved = this._resolveVar("$" + path, vars);
+          if (resolved === undefined) return _match; // leave unresolved refs as-is
+          if (typeof resolved === "string" || typeof resolved === "number" || typeof resolved === "boolean") {
+            return String(resolved);
+          }
+          // Complex objects in templates get JSON-stringified
+          try { return JSON.stringify(resolved); } catch { return String(resolved); }
+        });
+      }
+      return value;
+    }
+
+    if (Array.isArray(value)) {
+      return value.map(item => this._resolveDeep(item, vars));
+    }
+
+    if (value !== null && typeof value === "object") {
+      const resolved: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+        resolved[k] = this._resolveDeep(v, vars);
+      }
+      return resolved;
+    }
+
+    // Primitives (number, boolean, null) pass through
+    return value;
+  }
+
+  /**
+   * Resolve a single $variable reference.
+   *
+   * Resolution order:
+   *   1. Exact match in vars: vars["$pipeline"], vars["$input"]
+   *   2. Bare name (without $): vars["results"] from "$results"
+   *   3. Dot-path: "$input.query" → vars["$input"]["query"] or vars["input"]["query"]
+   *   4. Array index: "$results[0].content" → vars["results"][0]["content"]
+   *   5. Property access on resolved value: "$results.length" → (resolved array).length
+   *
+   * Returns undefined if the reference cannot be resolved (not the raw string).
+   */
   private _resolveVar(ref: string, vars: Record<string, unknown>): unknown {
-    // Try exact match first (e.g. "$pipeline", "$input")
+    // Exact match (e.g. "$pipeline", "$input", "$now")
     if (ref in vars) return vars[ref];
 
-    // Try without $ prefix (step `as` names are stored without $)
-    const bare = ref.slice(1); // "results" from "$results"
+    // Bare name without $ prefix (step `as` names stored without $)
+    const bare = ref.slice(1);
     if (bare in vars) return vars[bare];
 
-    // Dot-path resolution: "$input.query" → vars["$input"]["query"]
-    const dotIdx = ref.indexOf(".");
-    if (dotIdx > 0) {
-      const root = ref.slice(0, dotIdx);  // "$input"
-      const path = ref.slice(dotIdx + 1); // "query" or "nested.deep"
+    // Parse the reference into segments: "$input.nested[0].field" → ["$input", "nested", "[0]", "field"]
+    const segments = this._parseRefPath(ref);
+    if (segments.length === 0) return undefined;
 
-      // Try with $ prefix first, then without
-      const rootVal = vars[root] ?? vars[root.slice(1)];
-      if (rootVal != null && typeof rootVal === "object") {
-        const parts = path.split(".");
-        let current: unknown = rootVal;
-        for (const part of parts) {
-          if (current == null || typeof current !== "object") return ref;
-          current = (current as Record<string, unknown>)[part];
-        }
-        return current ?? ref;
+    // Find the root variable
+    const rootName = segments[0];
+    let current: unknown = vars[rootName] ?? vars[rootName.slice(1)];
+    if (current === undefined) return undefined;
+
+    // Walk the path
+    for (let i = 1; i < segments.length; i++) {
+      if (current == null) return undefined;
+      const seg = segments[i];
+
+      // Array index: "[0]", "[1]"
+      const indexMatch = seg.match(/^\[(\d+)\]$/);
+      if (indexMatch) {
+        if (!Array.isArray(current)) return undefined;
+        const idx = parseInt(indexMatch[1]);
+        current = (current as unknown[])[idx];
+        continue;
+      }
+
+      // Property access on objects
+      if (typeof current === "object" && current !== null) {
+        current = (current as Record<string, unknown>)[seg];
+        continue;
+      }
+
+      // Built-in property access on primitives (e.g. .length on arrays/strings)
+      if (seg === "length") {
+        if (Array.isArray(current)) return current.length;
+        if (typeof current === "string") return current.length;
+      }
+
+      return undefined;
+    }
+
+    return current;
+  }
+
+  /**
+   * Parse a $variable reference into path segments.
+   * "$input.query"         → ["$input", "query"]
+   * "$results[0].content"  → ["$results", "[0]", "content"]
+   * "$input.nested.deep"   → ["$input", "nested", "deep"]
+   */
+  private _parseRefPath(ref: string): string[] {
+    const segments: string[] = [];
+    let current = "";
+
+    for (let i = 0; i < ref.length; i++) {
+      const ch = ref[i];
+
+      if (ch === "." && current) {
+        segments.push(current);
+        current = "";
+      } else if (ch === "[") {
+        if (current) segments.push(current);
+        current = "[";
+      } else if (ch === "]" && current.startsWith("[")) {
+        segments.push(current + "]");
+        current = "";
+      } else {
+        current += ch;
       }
     }
 
-    return ref; // return the raw string if unresolvable
+    if (current) segments.push(current);
+    return segments;
   }
 
   private _ensureArray(value: unknown): unknown[] {
