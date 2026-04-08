@@ -454,14 +454,21 @@ export class ProcedureEngine {
         const minScore = Number(p.min_score ?? 0.3);
         const embedding = await ctx.embed(query);
         const results = await ctx.db.vectorSearch(embedding, limit, minScore);
-        return results.map(r => ({ ...r.entry, score: r.score }));
+        return results.map(r => {
+          const { embedding: _, ...entry } = r.entry as Record<string, unknown>;
+          return { ...entry, score: r.score };
+        });
       }
 
       case "search_text": {
         const query = String(p.query ?? "");
         const limit = Number(p.limit ?? 10);
         const category = p.category as string | undefined;
-        return await ctx.db.searchText(query, { limit, category });
+        const textResults = await ctx.db.searchText(query, { limit, category });
+        return textResults.map(r => {
+          const { embedding: _, ...rest } = r as Record<string, unknown>;
+          return rest;
+        });
       }
 
       case "filter": {

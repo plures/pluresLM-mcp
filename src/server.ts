@@ -832,7 +832,15 @@ export async function startServer(): Promise<void> {
         const dryRun = args.dryRun !== undefined ? Boolean(args.dryRun) : true;
 
         const result = await db.consolidate(threshold, dryRun);
-        return textResult(result);
+        return textResult({
+          duplicatesFound: result.duplicatesFound,
+          duplicatesRemoved: result.duplicatesRemoved,
+          suggestions: result.suggestions.map(s => ({
+            original: { id: s.original.id, content: s.original.content?.slice(0, 200), category: s.original.category },
+            duplicate: { id: s.duplicate.id, content: s.duplicate.content?.slice(0, 200), category: s.duplicate.category },
+            similarity: Math.round(s.similarity * 1000) / 1000,
+          })),
+        });
       }
 
       if (name === "pluresLM_find_stale") {
@@ -856,7 +864,14 @@ export async function startServer(): Promise<void> {
 
       if (name === "pluresLM_world_state") {
         const worldState = await db.getWorldState();
-        return textResult(worldState);
+        return textResult({
+          summary: worldState.summary,
+          memoryCount: worldState.memoryCount,
+          categories: worldState.categories,
+          recentActivity: worldState.recentActivity.map(m => ({
+            id: m.id, content: m.content?.slice(0, 200), category: m.category, tags: m.tags, created_at: m.created_at,
+          })),
+        });
       }
 
       if (name === "pluresLM_daily_summary") {

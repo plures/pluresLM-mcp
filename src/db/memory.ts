@@ -29,6 +29,20 @@ export interface SearchResult {
   score: number;
 }
 
+/** MemoryEntry without the embedding vector — for all public API responses */
+export type MemoryEntryPublic = Omit<MemoryEntry, 'embedding'>;
+
+/** Strip embedding from a MemoryEntry for public output */
+function stripEmbedding(entry: MemoryEntry): MemoryEntryPublic {
+  const { embedding: _, ...rest } = entry;
+  return rest;
+}
+
+/** Strip embedding from a SearchResult for public output */
+function stripSearchEmbedding(result: SearchResult): { entry: MemoryEntryPublic; score: number } {
+  return { entry: stripEmbedding(result.entry), score: result.score };
+}
+
 // Type-safe PluresDB interface
 interface NativePluresDatabase extends PluresDatabaseNative {
   put(id: string, data: unknown): string;
