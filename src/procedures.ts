@@ -936,9 +936,7 @@ export class ProcedureEngine {
     if (typeof value === "string") {
       // Pure reference: entire string is a $var
       if (value.startsWith("$") && !value.includes(" ")) {
-        const resolved = this._resolveVar(value, vars);
-        this._log(`_resolveDeep: "${value}" → ${resolved === undefined ? 'undefined' : typeof resolved}`);
-        return resolved;
+        return this._resolveVar(value, vars);
       }
       // Template interpolation: "Found $results.length items in $input.category"
       if (value.includes("$")) {
