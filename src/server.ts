@@ -581,17 +581,35 @@ export async function startServer(): Promise<void> {
         const stored = await db.store(content, embedding, { tags, category, source });
         await db.incrementCaptureCount();
 
-        // Fire after_store procedures (async, don't block the response)
-        procedures.fireEvent("after_store", {
-          id: stored.entry.id,
-          content,
-          tags,
-          category,
-          source,
-          isDuplicate: stored.isDuplicate,
-        }).catch(err => console.error("[procedures] after_store error:", err));
+        // Fire after_store procedures and collect actions for the caller
+        let procedureActions: Array<Record<string, unknown>> = [];
+        try {
+          const procResults = await procedures.fireEvent("after_store", {
+            id: stored.entry.id,
+            content,
+            tags,
+            category,
+            source,
+            isDuplicate: stored.isDuplicate,
+          });
+          // Extract actionable outputs from procedure emit steps
+          for (const r of procResults) {
+            if (!r.success || !r.output) continue;
+            const out = typeof r.output === "object" && r.output !== null
+              ? (r.output as Record<string, unknown>).output ?? r.output
+              : r.output;
+            if (typeof out === "object" && out !== null) {
+              const rec = out as Record<string, unknown>;
+              if (rec.action || rec.action_required || rec.instruction) {
+                procedureActions.push({ procedure: r.procedure, ...rec });
+              }
+            }
+          }
+        } catch (err) {
+          console.error("[procedures] after_store error:", err);
+        }
 
-        return textResult({
+        const result: Record<string, unknown> = {
           id: stored.entry.id,
           isDuplicate: stored.isDuplicate,
           updatedId: stored.updatedId,
@@ -599,7 +617,11 @@ export async function startServer(): Promise<void> {
           tags: stored.entry.tags,
           category: stored.entry.category,
           source: stored.entry.source,
-        });
+        };
+        if (procedureActions.length > 0) {
+          result.procedureActions = procedureActions;
+        }
+        return textResult(result);
       }
 
       if (name === "pluresLM_search") {
