@@ -73,7 +73,7 @@ const toolCategoryRule = defineRule<PluresLmContext>({
     ],
     invariants: ['Every recognized tool maps to exactly one category'],
   }),
-  impl: (state) => {
+  impl: (state: any) => {
     const toolName = state.context.request.toolName;
     const category = TOOL_CATEGORIES[toolName];
     if (category) {
@@ -97,7 +97,7 @@ const httpAuthGateRule = defineRule<PluresLmContext>({
     ],
     invariants: ['stdio transport always passes', 'Read-only status tools never require auth'],
   }),
-  impl: (state) => {
+  impl: (state: any) => {
     if (state.context.config.transport === 'stdio') {
       return RuleResult.skip('stdio transport — trusted local pipe');
     }
@@ -134,7 +134,7 @@ const knownToolConstraint = defineConstraint<PluresLmContext>({
     ],
     invariants: ['Constraint is stateless — depends only on tool name'],
   }),
-  impl: (state) => {
+  impl: (state: any) => {
     const toolName = state.context.request.toolName;
     if (toolName in TOOL_CATEGORIES) return true;
     return `Unknown tool: ${toolName}`;

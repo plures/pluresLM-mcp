@@ -72,7 +72,7 @@ const requiredFieldsRule = defineRule<PluresLmContext>({
       'Empty-string values are treated as missing',
     ],
   }),
-  impl: (state) => {
+  impl: (state: any) => {
     const { toolName, args } = state.context.request;
     const missing: string[] = [];
 
@@ -111,7 +111,7 @@ const numericBoundsRule = defineRule<PluresLmContext>({
     ],
     invariants: ['Never blocks a request — only advisory warnings'],
   }),
-  impl: (state) => {
+  impl: (state: any) => {
     const { args } = state.context.request;
     const warnings: string[] = [];
 
@@ -161,7 +161,7 @@ const forgetMutualExclusionConstraint = defineConstraint<PluresLmContext>({
     ],
     invariants: ['Only evaluated for pluresLM_forget — all other tools pass unconditionally'],
   }),
-  impl: (state) => {
+  impl: (state: any) => {
     const { toolName, args } = state.context.request;
     if (toolName !== 'pluresLM_forget') return true;
 
@@ -185,7 +185,7 @@ const bundleRequiredConstraint = defineConstraint<PluresLmContext>({
     ],
     invariants: ['Only evaluated for pluresLM_restore_bundle'],
   }),
-  impl: (state) => {
+  impl: (state: any) => {
     const { toolName, args } = state.context.request;
     if (toolName !== 'pluresLM_restore_bundle') return true;
     if (args.bundle) return true;
@@ -205,7 +205,7 @@ const packRequiredConstraint = defineConstraint<PluresLmContext>({
     ],
     invariants: ['Only evaluated for pluresLM_import_pack'],
   }),
-  impl: (state) => {
+  impl: (state: any) => {
     const { toolName, args } = state.context.request;
     if (toolName !== 'pluresLM_import_pack') return true;
     if (args.pack) return true;

@@ -95,7 +95,7 @@ const routeRule = defineRule<PluresLmContext>({
       'requiresEmbedding is true only for tools that need vector operations',
     ],
   }),
-  impl: (state) => {
+  impl: (state: any) => {
     const toolName = state.context.request.toolName;
     const entry = ROUTE_TABLE[toolName];
 
@@ -126,7 +126,7 @@ const forgetRoutingRule = defineRule<PluresLmContext>({
     ],
     invariants: ['Only fires for pluresLM_forget — skips for all other tools'],
   }),
-  impl: (state) => {
+  impl: (state: any) => {
     const { toolName, args } = state.context.request;
     if (toolName !== 'pluresLM_forget') {
       return RuleResult.skip('Not a forget operation');

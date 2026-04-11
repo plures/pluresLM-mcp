@@ -45,7 +45,7 @@ const sessionActivationRule = defineRule<PluresLmContext>({
     ],
     invariants: ['Expired sessions cannot be reactivated'],
   }),
-  impl: (state) => {
+  impl: (state: any) => {
     const sessionState = state.context.session.state;
 
     if (sessionState === 'expired') {
@@ -78,7 +78,7 @@ const idleDetectionRule = defineRule<PluresLmContext>({
     ],
     invariants: ['Uses IDLE_TIMEOUT_MS (5 min) as threshold'],
   }),
-  impl: (state) => {
+  impl: (state: any) => {
     const { lastActiveAt, state: sessionState } = state.context.session;
 
     if (sessionState === 'expired') {
@@ -107,7 +107,7 @@ const rateLimitRule = defineRule<PluresLmContext>({
     ],
     invariants: ['Rate limits reset each window', 'Default max is 60 requests per minute'],
   }),
-  impl: (state) => {
+  impl: (state: any) => {
     const { requestsInWindow, maxRequestsPerMinute, windowStart } = state.context.rateLimit;
 
     // Check if we're still in the current window
@@ -147,7 +147,7 @@ const sessionNotExpiredConstraint = defineConstraint<PluresLmContext>({
     ],
     invariants: ['An expired session can never pass this constraint'],
   }),
-  impl: (state) => {
+  impl: (state: any) => {
     if (state.context.session.state === 'expired') {
       return 'Session has expired — please reconnect';
     }
@@ -167,7 +167,7 @@ const rateLimitConstraint = defineConstraint<PluresLmContext>({
     ],
     invariants: ['Uses the same window as the rate-limit rule'],
   }),
-  impl: (state) => {
+  impl: (state: any) => {
     const { requestsInWindow, maxRequestsPerMinute, windowStart } = state.context.rateLimit;
 
     const elapsed = Date.now() - windowStart;
