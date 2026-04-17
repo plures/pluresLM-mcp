@@ -1,3 +1,12 @@
+## [2.11.1] — 2026-04-17
+
+- fix(lifecycle): label-based retry counter + CI fix priority (3e05451)
+- ci: lifecycle — add unmilestoned issue fallback + force-merge on CI exhaustion (1282cee)
+- ci: lifecycle v10 — auto-retry transient failures, force-merge on exhaustion (bbb9105)
+- ci: inline lifecycle workflow — fix schedule failures (ad7aedb)
+- docs: add structured ROADMAP.md for automated issue generation (6fc2d11)
+- chore: centralize CI to org-wide reusable workflow (91a1c07)
+
 ## [2.11.0] — 2026-04-06
 
 - feat: expand native procedure execution to all PluresDB IR step types (#12) (8d1faaf)
