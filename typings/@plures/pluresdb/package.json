@@ -1,1 +1,5 @@
-{ "name": "@plures/pluresdb", "version": "0.0.0-stub", "types": "index.d.ts" }
+{
+  "name": "@plures/pluresdb",
+  "version": "2.14.0",
+  "types": "index.d.ts"
+}

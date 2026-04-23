@@ -1,1 +1,12 @@
-{ "name": "@plures/praxis", "version": "0.0.0-stub", "exports": { ".": { "types": "./core.d.ts" }, "./core": { "types": "./core.d.ts" } } }
+{
+  "name": "@plures/praxis",
+  "version": "2.14.0",
+  "exports": {
+    ".": {
+      "types": "./core.d.ts"
+    },
+    "./core": {
+      "types": "./core.d.ts"
+    }
+  }
+}
