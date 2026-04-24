@@ -45,6 +45,12 @@ function asStringArray(v: unknown): string[] | undefined {
   return v.map((x) => String(x));
 }
 
+function parseConflictResolution(args: JsonObject): "skip" | "overwrite" | "merge" {
+  const v = args.conflict;
+  if (v === "overwrite" || v === "merge") return v;
+  return "skip";
+}
+
 async function* walkDir(root: string, opts?: { ignore?: string[] }): AsyncGenerator<string> {
   const ignore = new Set(opts?.ignore ?? []);
 
@@ -1026,7 +1032,7 @@ export async function startServer(): Promise<void> {
       if (name === "pluresLM_import_procedures") {
         const rawProcs = args.procedures;
         if (!Array.isArray(rawProcs)) throw new McpError(ErrorCode.InvalidParams, "procedures must be an array");
-        const conflict = args.conflict != null ? String(args.conflict) as "skip" | "overwrite" | "merge" : "skip";
+        const conflict = parseConflictResolution(args);
         const result = await procedures.importProcedures(rawProcs as ProcedureDefinition[], { conflict });
         return textResult(result);
       }
@@ -1074,7 +1080,7 @@ export async function startServer(): Promise<void> {
       }
 
       if (name === "pluresLM_bundle_install") {
-        const conflict = args.conflict != null ? String(args.conflict) as "skip" | "overwrite" | "merge" : "skip";
+        const conflict = parseConflictResolution(args);
 
         if (args.bundle != null) {
           // Install from provided bundle object

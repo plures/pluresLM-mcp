@@ -148,6 +148,7 @@ export interface ImportResult {
 const PROCEDURE_CATEGORY = "system:procedure";
 const BUNDLE_CATEGORY = "system:procedure-bundle";
 const MAX_STEPS = 50;
+const MAX_BUNDLES_QUERY_LIMIT = 200;
 
 // ============================================================================
 // Procedure Engine
@@ -1095,7 +1096,7 @@ export class ProcedureEngine {
    */
   async listBundles(): Promise<ProcedureBundle[]> {
     try {
-      const results = await this.db.searchText("bundle:", { limit: 200, category: BUNDLE_CATEGORY });
+      const results = await this.db.searchText("bundle:", { limit: MAX_BUNDLES_QUERY_LIMIT, category: BUNDLE_CATEGORY });
       const bundles: ProcedureBundle[] = [];
       for (const item of results) {
         try {
@@ -1124,8 +1125,7 @@ export class ProcedureEngine {
   }
 
   private _log(msg: string): void {
-    if (this.debug) console.log(`[procedures] ${msg}`);
-    else console.log(`[procedures] ${msg}`);
+    console.log(`[procedures] ${msg}`);
   }
 
   /** Cleanup on shutdown */
