@@ -108,11 +108,45 @@ export interface ProcedureResult {
   error?: string;
 }
 
+/**
+ * Structured export of one or more procedures — used for backup and migration.
+ */
+export interface ProcedureExport {
+  version: string;
+  exported_at: number;
+  procedure_count: number;
+  procedures: ProcedureDefinition[];
+}
+
+/**
+ * A named, versioned collection of procedures — shareable across instances.
+ * Procedures are embedded in full so a bundle is self-contained.
+ */
+export interface ProcedureBundle {
+  name: string;
+  version: string;
+  description?: string;
+  /** SemVer constraints on pluresLM-mcp (e.g. "pluresLM-mcp >= 2.11.0") */
+  requires?: string[];
+  procedures: ProcedureDefinition[];
+  tags?: string[];
+  created_at: number;
+}
+
+/** Result of an import (procedures or bundle). */
+export interface ImportResult {
+  imported: number;
+  skipped: number;
+  overwritten: number;
+  errors: string[];
+}
+
 // ============================================================================
 // Constants
 // ============================================================================
 
 const PROCEDURE_CATEGORY = "system:procedure";
+const BUNDLE_CATEGORY = "system:procedure-bundle";
 const MAX_STEPS = 50;
 
 // ============================================================================
@@ -899,6 +933,194 @@ export class ProcedureEngine {
       case "d": return val * 86_400_000;
       default: return 0;
     }
+  }
+
+  // --------------------------------------------------------------------------
+  // Export / Import
+  // --------------------------------------------------------------------------
+
+  /**
+   * Export all (or a filtered subset of) procedures as a structured JSON blob.
+   * Suitable for backup and cross-instance migration.
+   */
+  exportProcedures(filter?: { names?: string[] }): ProcedureExport {
+    let procs = this.list();
+    if (filter?.names?.length) {
+      const nameSet = new Set(filter.names);
+      procs = procs.filter(p => nameSet.has(p.name));
+    }
+    return {
+      version: "1.0.0",
+      exported_at: Date.now(),
+      procedure_count: procs.length,
+      procedures: procs,
+    };
+  }
+
+  /**
+   * Import procedures from a `ProcedureExport` or a bare array.
+   *
+   * Conflict resolution:
+   *  - `skip`      — leave the existing procedure unchanged (default)
+   *  - `overwrite` — replace the existing procedure, resetting stats
+   *  - `merge`     — update definition but preserve stats and created_at
+   */
+  async importProcedures(
+    procedures: ProcedureDefinition[],
+    opts: { conflict?: "skip" | "overwrite" | "merge" } = {},
+  ): Promise<ImportResult> {
+    const conflict = opts.conflict ?? "skip";
+    let imported = 0;
+    let skipped = 0;
+    let overwritten = 0;
+    const errors: string[] = [];
+
+    for (const proc of procedures) {
+      try {
+        const existing = this.procedures.get(proc.name);
+
+        if (existing) {
+          if (conflict === "skip") {
+            skipped++;
+            continue;
+          }
+
+          if (conflict === "overwrite") {
+            this._teardownTrigger(existing);
+            const reset: ProcedureDefinition = {
+              ...proc,
+              stats: { run_count: 0, error_count: 0 },
+              updated_at: Date.now(),
+            };
+            this.procedures.set(proc.name, reset);
+            this._setupTrigger(reset);
+            const embedding = await this.embed(`procedure: ${reset.name} — ${reset.description ?? ""}`);
+            await this.db.store(JSON.stringify(reset), embedding, {
+              tags: ["procedure", `proc:${reset.name}`],
+              category: PROCEDURE_CATEGORY,
+              source: "procedure-engine",
+            });
+            overwritten++;
+            continue;
+          }
+
+          if (conflict === "merge") {
+            this._teardownTrigger(existing);
+            const merged: ProcedureDefinition = {
+              ...proc,
+              id: existing.id,
+              created_at: existing.created_at,
+              stats: existing.stats,
+              version: existing.version + 1,
+              updated_at: Date.now(),
+            };
+            this.procedures.set(proc.name, merged);
+            this._setupTrigger(merged);
+            const embedding = await this.embed(`procedure: ${merged.name} — ${merged.description ?? ""}`);
+            await this.db.store(JSON.stringify(merged), embedding, {
+              tags: ["procedure", `proc:${merged.name}`],
+              category: PROCEDURE_CATEGORY,
+              source: "procedure-engine",
+            });
+            overwritten++;
+            continue;
+          }
+        }
+
+        // New procedure — use the standard create path
+        await this.create({
+          name: proc.name,
+          description: proc.description,
+          trigger: proc.trigger,
+          steps: proc.steps,
+          created_by: proc.created_by ?? "import",
+        });
+        imported++;
+      } catch (err) {
+        errors.push(`${proc.name}: ${String(err)}`);
+      }
+    }
+
+    this._log(`import complete: ${imported} imported, ${skipped} skipped, ${overwritten} overwritten, ${errors.length} errors`);
+    return { imported, skipped, overwritten, errors };
+  }
+
+  // --------------------------------------------------------------------------
+  // Bundle management
+  // --------------------------------------------------------------------------
+
+  /**
+   * Create a named, versioned bundle from existing procedures and persist it to DB.
+   */
+  async createBundle(opts: {
+    name: string;
+    version?: string;
+    description?: string;
+    procedureNames: string[];
+    tags?: string[];
+    requires?: string[];
+  }): Promise<ProcedureBundle> {
+    if (!opts.name) throw new Error("bundle name is required");
+    if (!opts.procedureNames?.length) throw new Error("procedureNames must not be empty");
+
+    const procs = opts.procedureNames.map(n => {
+      const p = this.procedures.get(n);
+      if (!p) throw new Error(`procedure "${n}" not found`);
+      return p;
+    });
+
+    const bundle: ProcedureBundle = {
+      name: opts.name,
+      version: opts.version ?? "1.0.0",
+      description: opts.description,
+      requires: opts.requires,
+      procedures: procs,
+      tags: opts.tags,
+      created_at: Date.now(),
+    };
+
+    const embedding = await this.embed(`bundle: ${bundle.name} — ${bundle.description ?? ""}`);
+    await this.db.store(JSON.stringify(bundle), embedding, {
+      tags: ["procedure-bundle", `bundle:${bundle.name}`, ...(bundle.tags ?? [])],
+      category: BUNDLE_CATEGORY,
+      source: "procedure-engine",
+    });
+
+    this._log(`created bundle: ${bundle.name} (${procs.length} procedures)`);
+    return bundle;
+  }
+
+  /**
+   * List all stored procedure bundles.
+   */
+  async listBundles(): Promise<ProcedureBundle[]> {
+    try {
+      const results = await this.db.searchText("bundle:", { limit: 200, category: BUNDLE_CATEGORY });
+      const bundles: ProcedureBundle[] = [];
+      for (const item of results) {
+        try {
+          const bundle = JSON.parse(item.content) as ProcedureBundle;
+          if (bundle.name && Array.isArray(bundle.procedures)) {
+            bundles.push(bundle);
+          }
+        } catch { /* skip malformed */ }
+      }
+      return bundles;
+    } catch (err) {
+      this._log(`failed to list bundles: ${err}`);
+      return [];
+    }
+  }
+
+  /**
+   * Install all procedures contained in a bundle.
+   * Accepts a full `ProcedureBundle` object (e.g. one received via `listBundles`
+   * or passed in from another instance).
+   */
+  async installBundle(bundle: ProcedureBundle, opts?: { conflict?: "skip" | "overwrite" | "merge" }): Promise<ImportResult> {
+    if (!bundle?.procedures?.length) throw new Error("bundle contains no procedures");
+    this._log(`installing bundle: ${bundle.name} (${bundle.procedures.length} procedures)`);
+    return this.importProcedures(bundle.procedures, opts ?? {});
   }
 
   private _log(msg: string): void {

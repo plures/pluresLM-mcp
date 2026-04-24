@@ -19,7 +19,7 @@ import { MemoryDB, type MemoryEntry } from "./db/memory.js";
 import { createEmbeddings } from "./embeddings/index.js";
 
 import { loadConfig } from "./config.js";
-import { ProcedureEngine, type ProcedureStep, type ProcedureTrigger } from "./procedures.js";
+import { ProcedureEngine, type ProcedureStep, type ProcedureTrigger, type ProcedureBundle, type ProcedureDefinition } from "./procedures.js";
 import { createPluresLmEngine } from "./praxis/index.js";
 
 type JsonObject = Record<string, unknown>;
@@ -485,6 +485,83 @@ export async function startServer(): Promise<void> {
             required: ["name"],
           },
         },
+
+        // ---- Procedure export / import / bundles ----
+        {
+          name: "pluresLM_export_procedures",
+          description: "Export stored procedures as structured JSON — for backup, migration, or sharing. Optionally filter to specific procedure names.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              names: { type: "array", items: { type: "string" }, description: "Optional list of procedure names to export. Exports all when omitted." },
+            },
+          },
+        },
+        {
+          name: "pluresLM_import_procedures",
+          description: "Import procedures from a ProcedureExport JSON (produced by pluresLM_export_procedures). Supports skip/overwrite/merge conflict resolution.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              procedures: {
+                type: "array",
+                description: "Array of ProcedureDefinition objects to import.",
+                items: { type: "object" },
+              },
+              conflict: {
+                type: "string",
+                enum: ["skip", "overwrite", "merge"],
+                description: "How to handle a procedure that already exists. skip (default) keeps the existing one; overwrite replaces it; merge updates the definition but preserves stats.",
+              },
+            },
+            required: ["procedures"],
+          },
+        },
+        {
+          name: "pluresLM_bundle_create",
+          description: "Create a named, versioned bundle from existing procedures and persist it to the DB. Bundles are self-contained and shareable.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              name: { type: "string", description: "Bundle name (e.g. cognitive-architecture)." },
+              version: { type: "string", description: "Semantic version string (default: 1.0.0)." },
+              description: { type: "string", description: "Human-readable description of the bundle." },
+              procedure_names: {
+                type: "array",
+                items: { type: "string" },
+                description: "Names of the procedures to include in the bundle.",
+              },
+              tags: { type: "array", items: { type: "string" }, description: "Optional tags for the bundle." },
+              requires: {
+                type: "array",
+                items: { type: "string" },
+                description: "Optional version constraints (e.g. ['pluresLM-mcp >= 2.11.0']).",
+              },
+            },
+            required: ["name", "procedure_names"],
+          },
+        },
+        {
+          name: "pluresLM_bundle_list",
+          description: "List all stored procedure bundles with their metadata and procedure counts.",
+          inputSchema: { type: "object", properties: {} },
+        },
+        {
+          name: "pluresLM_bundle_install",
+          description: "Install all procedures from a bundle into the procedure engine. Accepts a full bundle object (e.g. from pluresLM_bundle_list) or a bundle name to look up from storage.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              bundle: { type: "object", description: "Full ProcedureBundle object to install." },
+              name: { type: "string", description: "Name of a stored bundle to look up and install." },
+              conflict: {
+                type: "string",
+                enum: ["skip", "overwrite", "merge"],
+                description: "Conflict resolution strategy (default: skip).",
+              },
+            },
+          },
+        },
       ],
     };
   });
@@ -936,6 +1013,87 @@ export async function startServer(): Promise<void> {
         const procName = String(args.name ?? "");
         await procedures.remove(procName);
         return textResult({ deleted: procName });
+      }
+
+      // ---- Procedure export / import / bundle tools ----
+
+      if (name === "pluresLM_export_procedures") {
+        const names = asStringArray(args.names);
+        const exported = procedures.exportProcedures(names?.length ? { names } : undefined);
+        return textResult(exported);
+      }
+
+      if (name === "pluresLM_import_procedures") {
+        const rawProcs = args.procedures;
+        if (!Array.isArray(rawProcs)) throw new McpError(ErrorCode.InvalidParams, "procedures must be an array");
+        const conflict = args.conflict != null ? String(args.conflict) as "skip" | "overwrite" | "merge" : "skip";
+        const result = await procedures.importProcedures(rawProcs as ProcedureDefinition[], { conflict });
+        return textResult(result);
+      }
+
+      if (name === "pluresLM_bundle_create") {
+        const bundleName = String(args.name ?? "");
+        if (!bundleName) throw new McpError(ErrorCode.InvalidParams, "name is required");
+        const procedureNames = asStringArray(args.procedure_names);
+        if (!procedureNames?.length) throw new McpError(ErrorCode.InvalidParams, "procedure_names must be a non-empty array");
+        const bundle = await procedures.createBundle({
+          name: bundleName,
+          version: args.version != null ? String(args.version) : undefined,
+          description: args.description != null ? String(args.description) : undefined,
+          procedureNames,
+          tags: asStringArray(args.tags),
+          requires: asStringArray(args.requires),
+        });
+        return textResult({
+          name: bundle.name,
+          version: bundle.version,
+          description: bundle.description,
+          procedure_count: bundle.procedures.length,
+          procedures: bundle.procedures.map(p => p.name),
+          tags: bundle.tags,
+          requires: bundle.requires,
+          created_at: bundle.created_at,
+        });
+      }
+
+      if (name === "pluresLM_bundle_list") {
+        const bundles = await procedures.listBundles();
+        return textResult({
+          count: bundles.length,
+          bundles: bundles.map(b => ({
+            name: b.name,
+            version: b.version,
+            description: b.description,
+            procedure_count: b.procedures.length,
+            procedures: b.procedures.map(p => p.name),
+            tags: b.tags,
+            requires: b.requires,
+            created_at: b.created_at,
+          })),
+        });
+      }
+
+      if (name === "pluresLM_bundle_install") {
+        const conflict = args.conflict != null ? String(args.conflict) as "skip" | "overwrite" | "merge" : "skip";
+
+        if (args.bundle != null) {
+          // Install from provided bundle object
+          const bundle = args.bundle as ProcedureBundle;
+          const result = await procedures.installBundle(bundle, { conflict });
+          return textResult(result);
+        }
+
+        if (args.name != null) {
+          // Look up stored bundle by name
+          const bundleName = String(args.name);
+          const bundles = await procedures.listBundles();
+          const stored = bundles.find(b => b.name === bundleName);
+          if (!stored) throw new McpError(ErrorCode.InvalidParams, `Bundle "${bundleName}" not found`);
+          const result = await procedures.installBundle(stored, { conflict });
+          return textResult(result);
+        }
+
+        throw new McpError(ErrorCode.InvalidParams, "Provide either 'bundle' (full bundle object) or 'name' (stored bundle name)");
       }
 
       throw new McpError(ErrorCode.MethodNotFound, `Unknown tool: ${name}`);
