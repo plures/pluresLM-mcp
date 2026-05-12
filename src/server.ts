@@ -20,6 +20,7 @@ import { createEmbeddings } from "./embeddings/index.js";
 
 import { loadConfig } from "./config.js";
 import { ProcedureEngine, type ProcedureStep, type ProcedureTrigger } from "./procedures.js";
+import { DEFAULT_TASK_PROCEDURES } from "./task-procedures.js";
 import { createPluresLmEngine } from "./praxis/index.js";
 
 type JsonObject = Record<string, unknown>;
@@ -112,6 +113,7 @@ export async function startServer(): Promise<void> {
     debug: true,
   });
   await procedures.loadFromDb();
+  await procedures.ensureDefaults(DEFAULT_TASK_PROCEDURES);
 
   // Praxis logic engine — declarative rules for authorization, validation, routing
   const praxisEngine = createPluresLmEngine({
@@ -404,6 +406,19 @@ export async function startServer(): Promise<void> {
               query: { type: "string", description: "DSL query (e.g., 'filter(category == \"decision\") |> sort(by: created_at, dir: desc) |> limit(5)')." },
             },
             required: ["query"],
+          },
+        },
+
+        // ---- Tasks ----
+        {
+          name: "pluresLM_tasks",
+          description: "List open task obligations. Returns all tasks with status:open or status:in-progress. Use at session start to surface outstanding commitments. Also supports marking tasks complete.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              action: { type: "string", enum: ["list", "complete"], description: "Action: 'list' (default) returns open tasks, 'complete' marks a task done." },
+              task_id: { type: "string", description: "Task memory ID (required for action=complete)." },
+            },
           },
         },
 
@@ -881,6 +896,37 @@ export async function startServer(): Promise<void> {
         });
 
         return textResult({ query, results });
+      }
+
+      // ---- Task tools ----
+
+      if (name === "pluresLM_tasks") {
+        const action = String(args.action ?? "list");
+
+        if (action === "complete") {
+          const taskId = String(args.task_id ?? "");
+          if (!taskId) return textResult({ error: "task_id required for action=complete" });
+          await procedures.run("task-complete", { task_id: taskId });
+          return textResult({ status: "completed", task_id: taskId });
+        }
+
+        // Default: list open tasks
+        const openTasks = await db.searchText("category:task", { limit: 50, category: "task" });
+        const tasks = openTasks.map(t => ({
+          id: t.id,
+          content: t.content,
+          tags: t.tags,
+          status: t.tags?.find((tag: string) => tag.startsWith("status:"))?.replace("status:", "") ?? "unknown",
+          created_at: t.created_at,
+          age_hours: Math.round((Date.now() - (t.created_at ?? 0)) / 3_600_000),
+        }));
+
+        const open = tasks.filter(t => t.status === "open" || t.status === "in-progress");
+        const summary = open.length === 0
+          ? "No open tasks."
+          : `${open.length} open task(s):\n${open.map(t => `  - [${t.status}] ${t.content} (${t.age_hours}h old, id: ${t.id})`).join("\n")}`;
+
+        return textResult({ count: open.length, tasks: open, summary });
       }
 
       // ---- Procedure tools ----

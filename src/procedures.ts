@@ -253,6 +253,38 @@ export class ProcedureEngine {
     }
   }
 
+  /**
+   * Ensure default procedures exist. Called after loadFromDb.
+   * Does not overwrite user-modified procedures — only creates if missing.
+   */
+  async ensureDefaults(defaults: Array<{ name: string; description?: string; trigger: ProcedureTrigger; steps: ProcedureStep[]; enabled?: boolean }>): Promise<number> {
+    let created = 0;
+    for (const def of defaults) {
+      if (this.procedures.has(def.name)) {
+        this._log(`default procedure "${def.name}" already exists, skipping`);
+        continue;
+      }
+      try {
+        await this.create({
+          name: def.name,
+          description: def.description,
+          trigger: def.trigger,
+          steps: def.steps,
+          created_by: "system",
+        });
+        // Respect the enabled flag from the default
+        if (def.enabled === false) {
+          await this.update(def.name, { enabled: false });
+        }
+        created++;
+      } catch (err) {
+        this._log(`failed to create default procedure "${def.name}": ${err}`);
+      }
+    }
+    if (created > 0) this._log(`created ${created} default procedures`);
+    return created;
+  }
+
   // --------------------------------------------------------------------------
   // Execution
   // --------------------------------------------------------------------------
