@@ -3,7 +3,7 @@
   "version": "2.13.0",
   "description": "MCP server for PluresLM — persistent distributed vector memory for AI coding assistants",
   "type": "module",
-  "license": "BSL-1.1",
+  "license": "(BSL-1.1 OR MIT)",
   "author": "Plures <hello@plures.dev>",
   "repository": {
     "type": "git",
