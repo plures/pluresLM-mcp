@@ -172,7 +172,9 @@ PluresLM v2.0 is a **breaking change** from SQLite-based v1.x:
 
 ## License
 
-AGPL-3.0 - See [LICENSE](LICENSE)
+
+Dual-licensed under [BSL-1.1](LICENSE) and [MIT](LICENSE-MIT). You may choose either license at your option.
+
 
 ## Links
 
