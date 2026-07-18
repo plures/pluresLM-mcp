@@ -11,7 +11,7 @@
  * work-in-progress memories. Inaction = a task node with no edges.
  */
 
-import type { ProcedureDefinition, ProcedureTrigger, ProcedureStep } from "./procedures.js";
+import type { ProcedureDefinition } from "./procedures.js";
 
 // ── Procedure Definitions ───────────────────────────────────────────────────
 
